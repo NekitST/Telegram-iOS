@@ -14,10 +14,11 @@ import SheetComponent
 import MultilineTextComponent
 import BundleIconComponent
 import SolidRoundedButtonComponent
+import BlurredBackgroundComponent
 import Markdown
 import TelegramUIPreferences
 
-private final class GradientBackgroundComponent: Component {
+final class GradientBackgroundComponent: Component {
     public let colors: [UIColor]
     
     public init(
@@ -153,7 +154,7 @@ final class DemoPageEnvironment: Equatable {
     }
 }
 
-private final class PageComponent<ChildEnvironment: Equatable>: CombinedComponent {
+final class PageComponent<ChildEnvironment: Equatable>: CombinedComponent {
     typealias EnvironmentType = ChildEnvironment
     
     private let content: AnyComponent<ChildEnvironment>
@@ -252,7 +253,7 @@ private final class PageComponent<ChildEnvironment: Equatable>: CombinedComponen
                 .position(CGPoint(x: context.availableSize.width / 2.0, y: content.size.height + 40.0))
             )
             context.add(text
-                .position(CGPoint(x: context.availableSize.width / 2.0, y: content.size.height + 80.0))
+                .position(CGPoint(x: context.availableSize.width / 2.0, y: content.size.height + 60.0 + text.size.height / 2.0))
             )
             context.add(content
                 .position(CGPoint(x: content.size.width / 2.0, y: content.size.height / 2.0))
@@ -263,7 +264,7 @@ private final class PageComponent<ChildEnvironment: Equatable>: CombinedComponen
     }
 }
 
-private final class DemoPagerComponent: Component {
+final class DemoPagerComponent: Component {
     public final class Item: Equatable {
         public let content: AnyComponentWithIdentity<DemoPageEnvironment>
         
@@ -282,39 +283,31 @@ private final class DemoPagerComponent: Component {
     
     let items: [Item]
     let index: Int
-    let activeColor: UIColor
-    let inactiveColor: UIColor
+    let nextAction: ActionSlot<Void>?
+    let updated: (CGFloat, Int) -> Void
     
     public init(
         items: [Item],
         index: Int = 0,
-        activeColor: UIColor,
-        inactiveColor: UIColor
+        nextAction: ActionSlot<Void>? = nil,
+        updated: @escaping (CGFloat, Int) -> Void
     ) {
         self.items = items
         self.index = index
-        self.activeColor = activeColor
-        self.inactiveColor = inactiveColor
+        self.nextAction = nextAction
+        self.updated = updated
     }
     
     public static func ==(lhs: DemoPagerComponent, rhs: DemoPagerComponent) -> Bool {
         if lhs.items != rhs.items {
             return false
         }
-        if !lhs.activeColor.isEqual(rhs.activeColor) {
-            return false
-        }
-        if !lhs.inactiveColor.isEqual(rhs.inactiveColor) {
-            return false
-        }
         return true
     }
     
-    fileprivate final class View: UIView, UIScrollViewDelegate {
+    final class View: UIView, UIScrollViewDelegate {
         private let scrollView: UIScrollView
         private var itemViews: [AnyHashable: ComponentHostView<DemoPageEnvironment>] = [:]
-        
-        private let pageIndicatorView: ComponentHostView<Empty>
         
         private var component: DemoPagerComponent?
         
@@ -326,16 +319,15 @@ private final class DemoPagerComponent: Component {
             self.scrollView.alwaysBounceHorizontal = false
             self.scrollView.bounces = false
             self.scrollView.layer.cornerRadius = 10.0
-            
-            self.pageIndicatorView = ComponentHostView<Empty>()
-            self.pageIndicatorView.isUserInteractionEnabled = false
+            if #available(iOSApplicationExtension 11.0, iOS 11.0, *) {
+                self.scrollView.contentInsetAdjustmentBehavior = .never
+            }
             
             super.init(frame: frame)
             
             self.scrollView.delegate = self
             
             self.addSubview(self.scrollView)
-            self.addSubview(self.pageIndicatorView)
         }
         
         required init?(coder: NSCoder) {
@@ -350,11 +342,23 @@ private final class DemoPagerComponent: Component {
 
             self.ignoreContentOffsetChange = true
             let _ = self.update(component: component, availableSize: self.bounds.size, transition: .immediate)
+            component.updated(self.scrollView.contentOffset.x / (self.scrollView.contentSize.width - self.scrollView.frame.width), component.items.count)
             self.ignoreContentOffsetChange = false
         }
         
         func update(component: DemoPagerComponent, availableSize: CGSize, transition: Transition) -> CGSize {
             var validIds: [AnyHashable] = []
+            
+            component.nextAction?.connect { [weak self] in
+                if let self {
+                    var nextContentOffset = self.scrollView.contentOffset
+                    nextContentOffset.x += self.scrollView.frame.width
+                    if nextContentOffset.x >= self.scrollView.contentSize.width {
+                        nextContentOffset.x = 0.0
+                    }
+                    self.scrollView.contentOffset = nextContentOffset
+                }
+            }
             
             let firstTime = self.itemViews.isEmpty
             
@@ -369,6 +373,7 @@ private final class DemoPagerComponent: Component {
             
             if firstTime {
                 self.scrollView.contentOffset = CGPoint(x: CGFloat(component.index) * availableSize.width, y: 0.0)
+                component.updated(self.scrollView.contentOffset.x / (self.scrollView.contentSize.width - self.scrollView.frame.width), component.items.count)
             }
             let viewportCenter = self.scrollView.contentOffset.x + availableSize.width * 0.5
             
@@ -397,7 +402,6 @@ private final class DemoPagerComponent: Component {
                     itemTransition = transition.withAnimation(.none)
                     itemView = ComponentHostView<DemoPageEnvironment>()
                     self.itemViews[item.content.id] = itemView
-                    
                     
                     if item.content.id == (PremiumDemoScreen.Subject.fasterDownload as AnyHashable) {
                         self.scrollView.insertSubview(itemView, at: 0)
@@ -430,33 +434,15 @@ private final class DemoPagerComponent: Component {
                 
             self.component = component
             
-            if component.items.count > 1 {
-                let pageIndicatorComponent = PageIndicatorComponent(
-                    pageCount: component.items.count,
-                    position: self.scrollView.contentOffset.x / (self.scrollView.contentSize.width - availableSize.width),
-                    inactiveColor: component.inactiveColor,
-                    activeColor: component.activeColor
-                )
-                let indicatorSize = self.pageIndicatorView.update(
-                    transition: .immediate,
-                    component: AnyComponent(
-                        pageIndicatorComponent
-                    ),
-                    environment: {},
-                    containerSize: availableSize
-                )
-                self.pageIndicatorView.frame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - indicatorSize.width) / 2.0), y: availableSize.height - indicatorSize.height - 11.0), size: indicatorSize)
-            }
-            
             return availableSize
         }
     }
     
-    public func makeView() -> View {
+    func makeView() -> View {
         return View(frame: CGRect())
     }
     
-    public func update(view: View, availableSize: CGSize, state: EmptyComponentState, environment: Environment<Empty>, transition: Transition) -> CGSize {
+    func update(view: View, availableSize: CGSize, state: EmptyComponentState, environment: Environment<Empty>, transition: Transition) -> CGSize {
         return view.update(component: self, availableSize: availableSize, transition: transition)
     }
 }
@@ -485,7 +471,7 @@ private final class DemoSheetContent: CombinedComponent {
         self.context = context
         self.subject = subject
         self.source = source
-        self.order = order ?? [.moreUpload, .fasterDownload, .voiceToText, .noAds, .uniqueReactions, .premiumStickers, .animatedEmoji, .advancedChatManagement, .profileBadge, .animatedUserpics, .appIcons]
+        self.order = order ?? [.moreUpload, .fasterDownload, .voiceToText, .noAds, .uniqueReactions, .premiumStickers, .animatedEmoji, .advancedChatManagement, .profileBadge, .animatedUserpics, .appIcons, .translation]
         self.action = action
         self.dismiss = dismiss
     }
@@ -747,7 +733,7 @@ private final class DemoSheetContent: CombinedComponent {
                                     decoration: .fasterStars
                                 )),
                                 title: strings.Premium_FasterSpeed,
-                                text: strings.Premium_FasterSpeedInfo,
+                                text: isStandalone ? strings.Premium_FasterSpeedStandaloneInfo : strings.Premium_FasterSpeedInfo,
                                 textColor: textColor
                             )
                         )
@@ -765,7 +751,7 @@ private final class DemoSheetContent: CombinedComponent {
                                     decoration: .badgeStars
                                 )),
                                 title: strings.Premium_VoiceToText,
-                                text: strings.Premium_VoiceToTextInfo,
+                                text: isStandalone ? strings.Premium_VoiceToTextStandaloneInfo : strings.Premium_VoiceToTextInfo,
                                 textColor: textColor
                             )
                         )
@@ -815,7 +801,8 @@ private final class DemoSheetContent: CombinedComponent {
                                 content: AnyComponent(
                                     StickersCarouselComponent(
                                         context: component.context,
-                                        stickers: stickers
+                                        stickers: stickers,
+                                        tapAction: {}
                                     )
                                 ),
                                 title: strings.Premium_Stickers,
@@ -855,7 +842,7 @@ private final class DemoSheetContent: CombinedComponent {
                                     decoration: .swirlStars
                                 )),
                                 title: strings.Premium_ChatManagement,
-                                text: strings.Premium_ChatManagementInfo,
+                                text: isStandalone ? strings.Premium_ChatManagementStandaloneInfo : strings.Premium_ChatManagementInfo,
                                 textColor: textColor
                             )
                         )
@@ -933,6 +920,26 @@ private final class DemoSheetContent: CombinedComponent {
                     )
                 )
                 
+                availableItems[.translation] = DemoPagerComponent.Item(
+                    AnyComponentWithIdentity(
+                        id: PremiumDemoScreen.Subject.translation,
+                        component: AnyComponent(
+                            PageComponent(
+                                content: AnyComponent(PhoneDemoComponent(
+                                    context: component.context,
+                                    position: .top,
+                                    model: .island,
+                                    videoFile: configuration.videos["translations"],
+                                    decoration: .hello
+                                )),
+                                title: strings.Premium_Translation,
+                                text: isStandalone ? strings.Premium_TranslationStandaloneInfo : strings.Premium_TranslationInfo,
+                                textColor: textColor
+                            )
+                        )
+                    )
+                )
+                
                 var items: [DemoPagerComponent.Item] = component.order.compactMap { availableItems[$0] }
                 let index: Int
                 switch component.source {
@@ -949,8 +956,7 @@ private final class DemoSheetContent: CombinedComponent {
                     component: DemoPagerComponent(
                         items: items,
                         index: index,
-                        activeColor: UIColor(rgb: 0x7169ff),
-                        inactiveColor: theme.list.disclosureArrowColor
+                        updated: { _, _ in }
                     ),
                     availableSize: CGSize(width: context.availableSize.width, height: context.availableSize.width + 154.0),
                     transition: context.transition
@@ -966,9 +972,8 @@ private final class DemoSheetContent: CombinedComponent {
                         AnyComponentWithIdentity(
                             id: "background",
                             component: AnyComponent(
-                                BlurredRectangle(
-                                    color:  UIColor(rgb: 0x888888, alpha: 0.1),
-                                    radius: 15.0
+                                BlurredBackgroundComponent(
+                                    color:  UIColor(rgb: 0x888888, alpha: 0.1)
                                 )
                             )
                         ),
@@ -988,6 +993,8 @@ private final class DemoSheetContent: CombinedComponent {
             )
             context.add(closeButton
                 .position(CGPoint(x: context.availableSize.width - environment.safeInsets.left - closeButton.size.width, y: 28.0))
+                .clipsToBounds(true)
+                .cornerRadius(15.0)
             )
                          
             let buttonText: String
@@ -1002,6 +1009,10 @@ private final class DemoSheetContent: CombinedComponent {
                         buttonText = strings.Premium_Gift_GiftSubscription(price ?? "–").string
                     case .other:
                         switch component.subject {
+                            case .fasterDownload:
+                                buttonText = strings.Premium_FasterSpeed_Proceed
+                            case .advancedChatManagement:
+                                buttonText = strings.Premium_ChatManagement_Proceed
                             case .uniqueReactions:
                                 buttonText = strings.Premium_Reactions_Proceed
                                 buttonAnimationName = "premium_unlock"
@@ -1016,6 +1027,8 @@ private final class DemoSheetContent: CombinedComponent {
                             case .animatedEmoji:
                                 buttonText = strings.Premium_AnimatedEmoji_Proceed
                                 buttonAnimationName = "premium_unlock"
+                            case .translation:
+                                buttonText = strings.Premium_Translation_Proceed
                             default:
                                 buttonText = strings.Common_OK
                         }
@@ -1060,6 +1073,10 @@ private final class DemoSheetContent: CombinedComponent {
             var contentHeight: CGFloat = context.availableSize.width + 146.0
             if case .other = component.source {
                 contentHeight -= 40.0
+                
+                if [.advancedChatManagement, .fasterDownload].contains(component.subject) {
+                    contentHeight += 20.0
+                }
             }
               
             let buttonFrame = CGRect(origin: CGPoint(x: sideInset, y: contentHeight + 20.0), size: button.size)
@@ -1139,7 +1156,7 @@ private final class DemoSheetComponent: CombinedComponent {
                             })
                         }
                     )),
-                    backgroundColor: environment.theme.actionSheet.opaqueItemBackgroundColor,
+                    backgroundColor: .color(environment.theme.actionSheet.opaqueItemBackgroundColor),
                     animateOut: animateOut
                 ),
                 environment: {
@@ -1147,6 +1164,8 @@ private final class DemoSheetComponent: CombinedComponent {
                     SheetComponentEnvironment(
                         isDisplaying: environment.value.isVisible,
                         isCentered: environment.metrics.widthClass == .regular,
+                        hasInputHeight: !environment.inputHeight.isZero,
+                        regularMetricsSize: nil,
                         dismiss: { animated in
                             if animated {
                                 animateOut.invoke(Action { _ in
@@ -1177,6 +1196,7 @@ private final class DemoSheetComponent: CombinedComponent {
 
 public class PremiumDemoScreen: ViewControllerComponentContainer {
     public enum Subject {
+        case doubleLimits
         case moreUpload
         case fasterDownload
         case voiceToText
@@ -1189,6 +1209,7 @@ public class PremiumDemoScreen: ViewControllerComponentContainer {
         case appIcons
         case animatedEmoji
         case emojiStatus
+        case translation
     }
     
     public enum Source: Equatable {

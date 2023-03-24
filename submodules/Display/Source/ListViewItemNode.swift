@@ -88,7 +88,7 @@ open class ListViewItemNode: ASDisplayNode, AccessibilityFocusableNode {
     }
 
     let rotated: Bool
-    final var index: Int?
+    public internal(set) final var index: Int?
     
     public var isHighlightedInOverlay: Bool = false
     
@@ -145,6 +145,10 @@ open class ListViewItemNode: ASDisplayNode, AccessibilityFocusableNode {
     open var visibility: ListViewItemNodeVisibility = .none
     
     open var canBeSelected: Bool {
+        return true
+    }
+    
+    open func visibleForSelection(at point: CGPoint) -> Bool {
         return true
     }
     

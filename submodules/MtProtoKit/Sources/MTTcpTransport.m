@@ -551,6 +551,19 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
     }];
 }
 
+- (void)tcpConnectionDownloadActivityUpdated:(MTTcpConnection *)connection {
+    MTTcpTransportContext *transportContext = _transportContext;
+    [[MTTcpTransport tcpTransportQueue] dispatchOnQueue:^
+    {
+        if (transportContext.connection != connection)
+            return;
+        
+        id<MTTransportDelegate> delegate = self.delegate;
+        if ([delegate respondsToSelector:@selector(transportUpdatedDataReceiveProgress:progressToken:packetLength:progress:)])
+            [delegate transportActivityUpdated:self];
+    }];
+}
+
 - (void)tcpConnectionBehaviourRequestsReconnection:(MTTcpConnectionBehaviour *)behaviour error:(bool)error
 {
     MTTcpTransportContext *transportContext = _transportContext;
@@ -800,6 +813,20 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
         }
         if (reset) {
             [transportContext.connectionBehaviour requestConnection];
+        }
+    }];
+}
+
+- (void)simulateDisconnection {
+    MTTcpTransportContext *transportContext = _transportContext;
+    [[MTTcpTransport tcpTransportQueue] dispatchOnQueue:^ {
+        if (transportContext.connection.scheme != nil) {
+            MTTransportScheme *scheme = transportContext.connection.scheme;
+            __weak MTTcpTransport *weakSelf = self;
+            dispatch_async([MTTcpTransport tcpTransportQueue].nativeQueue, ^{
+                __strong MTTcpTransport *strongSelf = weakSelf;
+                [strongSelf connectionWatchdogTimeout:scheme];
+            });
         }
     }];
 }

@@ -75,7 +75,7 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
         self.view.addGestureRecognizer(tapRecognizer)
     }
     
-    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
+    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize, _ avatarInset: CGFloat) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
         let statusLayout = self.dateAndStatusNode.asyncLayout()
         let makeTitleLayout = TextNode.asyncLayout(self.titleNode)
         let makeTextLayout = TextNode.asyncLayout(self.textNode)
@@ -84,12 +84,17 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
         let previousContact = self.contact
         let previousContactInfo = self.contactInfo
         
-        return { item, layoutConstants, _, _, constrainedSize in
+        return { item, layoutConstants, _, _, constrainedSize, _ in
             var selectedContact: TelegramMediaContact?
             for media in item.message.media {
                 if let media = media as? TelegramMediaContact {
-                    selectedContact = media
+                    selectedContact = media;
                 }
+            }
+            
+            var incoming = item.message.effectivelyIncoming(item.context.account.peerId)
+            if case .forwardedMessages = item.associatedData.subject {
+                incoming = false
             }
             
             var titleString: NSAttributedString?
@@ -123,11 +128,11 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                         if !contactData.basicData.phoneNumbers.isEmpty {
                             for phone in contactData.basicData.phoneNumbers {
                                 if infoComponents.count < infoLineLimit {
-                                    infoComponents.append(formatPhoneNumber(phone.value))
+                                    infoComponents.append(formatPhoneNumber(context: item.context, number: phone.value))
                                 }
                             }
                         } else {
-                             infoComponents.append(formatPhoneNumber(selectedContact.phoneNumber))
+                             infoComponents.append(formatPhoneNumber(context: item.context, number: selectedContact.phoneNumber))
                         }
                         if infoComponents.count < infoLineLimit {
                             for email in contactData.emailAddresses {
@@ -143,14 +148,14 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                         }
                         info = infoComponents.joined(separator: "\n")
                     } else {
-                        info = formatPhoneNumber(selectedContact.phoneNumber)
+                        info = formatPhoneNumber(context: item.context, number: selectedContact.phoneNumber)
                     }
                 }
                 
                 updatedContactInfo = info
                 
-                titleString = NSAttributedString(string: displayName, font: titleFont, textColor: item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.accentTextColor : item.presentationData.theme.theme.chat.message.outgoing.accentTextColor)
-                textString = NSAttributedString(string: info, font: textFont, textColor: item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
+                titleString = NSAttributedString(string: displayName, font: titleFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.accentTextColor : item.presentationData.theme.theme.chat.message.outgoing.accentTextColor)
+                textString = NSAttributedString(string: info, font: textFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
             } else {
                 updatedContactInfo = nil
             }
@@ -172,7 +177,10 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                 }
                 var viewCount: Int?
                 var dateReplies = 0
-                let dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                    dateReactionsAndPeers = ([], [])
+                }
                 for attribute in item.message.attributes {
                     if let attribute = attribute as? EditedMessageAttribute {
                         edited = !attribute.isHidden
@@ -185,12 +193,12 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                     }
                 }
                 
-                let dateText = stringForMessageTimestampStatus(accountPeerId: item.context.account.peerId, message: item.message, dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings)
+                let dateText = stringForMessageTimestampStatus(accountPeerId: item.context.account.peerId, message: item.message, dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings, associatedData: item.associatedData)
                 
                 let statusType: ChatMessageDateAndStatusType?
                 switch position {
                     case .linear(_, .None), .linear(_, .Neighbour(true, _, _)):
-                        if item.message.effectivelyIncoming(item.context.account.peerId) {
+                        if incoming {
                             statusType = .BubbleIncoming
                         } else {
                             if item.message.flags.contains(.Failed) {
@@ -239,7 +247,7 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                 let titleColor: UIColor
                 let titleHighlightedColor: UIColor
                 let avatarPlaceholderColor: UIColor
-                if item.message.effectivelyIncoming(item.context.account.peerId) {
+                if incoming {
                     buttonImage = PresentationResourcesChat.chatMessageAttachedContentButtonIncoming(item.presentationData.theme.theme)!
                     buttonHighlightedImage = PresentationResourcesChat.chatMessageAttachedContentHighlightedButtonIncoming(item.presentationData.theme.theme)!
                     titleColor = item.presentationData.theme.theme.chat.message.incoming.accentTextColor
@@ -257,7 +265,7 @@ class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                     avatarPlaceholderColor = item.presentationData.theme.theme.chat.message.outgoing.mediaPlaceholderColor
                 }
                 
-                let (buttonWidth, continueLayout) = makeButtonLayout(constrainedSize.width, buttonImage, buttonHighlightedImage, nil, nil, item.presentationData.strings.Conversation_ViewContactDetails, titleColor, titleHighlightedColor)
+                let (buttonWidth, continueLayout) = makeButtonLayout(constrainedSize.width, buttonImage, buttonHighlightedImage, nil, nil, item.presentationData.strings.Conversation_ViewContactDetails, titleColor, titleHighlightedColor, false)
                 
                 var maxContentWidth: CGFloat = avatarSize.width + 7.0
                 if let statusSuggestedWidthAndContinue = statusSuggestedWidthAndContinue {

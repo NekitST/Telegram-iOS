@@ -13,6 +13,8 @@ import UniversalMediaPlayer
 import GalleryUI
 import HierarchyTrackingLayer
 import WallpaperBackgroundNode
+import ChatControllerInteraction
+import AvatarVideoNode
 
 private let timezoneOffset: Int32 = {
     let nowTimestamp = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
@@ -116,7 +118,6 @@ final class ChatMessageDateHeaderNode: ListViewItemHeaderNode {
     let labelNode: TextNode
     let backgroundNode: NavigationBackgroundNode
     let stickBackgroundNode: ASImageNode
-    let activateArea: AccessibilityAreaNode
     
     private var backgroundContent: WallpaperBubbleBackgroundNode?
     
@@ -189,16 +190,15 @@ final class ChatMessageDateHeaderNode: ListViewItemHeaderNode {
         }
         self.text = text
         
-        self.activateArea = AccessibilityAreaNode()
-        self.activateArea.accessibilityTraits = .staticText
-        
         super.init(layerBacked: false, dynamicBounce: true, isRotated: true, seeThrough: false)
         
         self.transform = CATransform3DMakeRotation(CGFloat.pi, 0.0, 0.0, 1.0)
         
         let graphics = PresentationResourcesChat.principalGraphics(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper, bubbleCorners: presentationData.chatBubbleCorners)
 
-        self.backgroundNode.updateColor(color: selectDateFillStaticColor(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), enableBlur: dateFillNeedsBlur(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), transition: .immediate)
+        let fullTranslucency: Bool = controllerInteraction?.enableFullTranslucency ?? true
+        
+        self.backgroundNode.updateColor(color: selectDateFillStaticColor(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), enableBlur: fullTranslucency && dateFillNeedsBlur(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), transition: .immediate)
         self.stickBackgroundNode.image = graphics.dateFloatingBackground
         self.stickBackgroundNode.alpha = 0.0
 
@@ -208,16 +208,12 @@ final class ChatMessageDateHeaderNode: ListViewItemHeaderNode {
             self.addSubnode(self.backgroundNode)
         }
         self.addSubnode(self.labelNode)
-        
-        self.addSubnode(self.activateArea)
-        
+                
         let titleFont = Font.medium(min(18.0, floor(presentationData.fontSize.baseDisplaySize * 13.0 / 17.0)))
         
         let attributedString = NSAttributedString(string: text, font: titleFont, textColor: bubbleVariableColor(variableColor: presentationData.theme.theme.chat.serviceMessage.dateTextColor, wallpaper: presentationData.theme.wallpaper))
         let labelLayout = TextNode.asyncLayout(self.labelNode)
-        
-        self.activateArea.accessibilityLabel = text
-        
+                
         let (size, apply) = labelLayout(TextNodeLayoutArguments(attributedString: attributedString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 320.0, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
         let _ = apply()
         self.labelNode.frame = CGRect(origin: CGPoint(), size: size.size)
@@ -234,8 +230,10 @@ final class ChatMessageDateHeaderNode: ListViewItemHeaderNode {
         self.presentationData = presentationData
         
         let graphics = PresentationResourcesChat.principalGraphics(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper, bubbleCorners: presentationData.chatBubbleCorners)
+        
+        let fullTranslucency: Bool = self.controllerInteraction?.enableFullTranslucency ?? true
 
-        self.backgroundNode.updateColor(color: selectDateFillStaticColor(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), enableBlur: dateFillNeedsBlur(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), transition: .immediate)
+        self.backgroundNode.updateColor(color: selectDateFillStaticColor(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), enableBlur: fullTranslucency && dateFillNeedsBlur(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper), transition: .immediate)
         self.stickBackgroundNode.image = graphics.dateFloatingBackground
         
         let titleFont = Font.medium(min(18.0, floor(presentationData.fontSize.baseDisplaySize * 13.0 / 17.0)))
@@ -279,9 +277,7 @@ final class ChatMessageDateHeaderNode: ListViewItemHeaderNode {
         self.backgroundNode.frame = backgroundFrame
         self.backgroundNode.update(size: backgroundFrame.size, cornerRadius: backgroundFrame.size.height / 2.0, transition: .immediate)
         self.labelNode.frame = CGRect(origin: CGPoint(x: backgroundFrame.origin.x + chatDateInset, y: backgroundFrame.origin.y + floorToScreenPixels((backgroundSize.height - labelSize.height) / 2.0)), size: labelSize)
-        
-        self.activateArea.frame = backgroundFrame
-        
+                
         if let backgroundContent = self.backgroundContent {
             backgroundContent.allowsGroupOpacity = true
             self.backgroundNode.isHidden = true
@@ -373,6 +369,7 @@ final class ChatMessageAvatarHeader: ListViewItemHeader {
     let peerId: PeerId
     let peer: Peer?
     let messageReference: MessageReference?
+    let adMessageId: EngineMessage.Id?
     let effectiveTimestamp: Int32
     let presentationData: ChatPresentationData
     let context: AccountContext
@@ -382,6 +379,11 @@ final class ChatMessageAvatarHeader: ListViewItemHeader {
         self.peerId = peerId
         self.peer = peer
         self.messageReference = messageReference
+        if message.adAttribute != nil {
+            self.adMessageId = message.id
+        } else {
+            self.adMessageId = nil
+        }
 
         var effectiveTimestamp = message.timestamp
         if let forwardInfo = message.forwardInfo, forwardInfo.flags.contains(.isImported) {
@@ -412,7 +414,7 @@ final class ChatMessageAvatarHeader: ListViewItemHeader {
     }
 
     func node(synchronousLoad: Bool) -> ListViewItemHeaderNode {
-        return ChatMessageAvatarHeaderNode(peerId: self.peerId, peer: self.peer, messageReference: self.messageReference, presentationData: self.presentationData, context: self.context, controllerInteraction: self.controllerInteraction, synchronousLoad: synchronousLoad)
+        return ChatMessageAvatarHeaderNode(peerId: self.peerId, peer: self.peer, messageReference: self.messageReference, adMessageId: self.adMessageId, presentationData: self.presentationData, context: self.context, controllerInteraction: self.controllerInteraction, synchronousLoad: synchronousLoad)
     }
 
     func updateNode(_ node: ListViewItemHeaderNode, previous: ListViewItemHeader?, next: ListViewItemHeader?) {
@@ -435,23 +437,21 @@ final class ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
     private let peerId: PeerId
     private let messageReference: MessageReference?
     private let peer: Peer?
+    private let adMessageId: EngineMessage.Id?
 
     private let containerNode: ContextControllerSourceNode
     private let avatarNode: AvatarNode
-    private var videoNode: UniversalVideoNode?
-    
-    private var videoContent: NativeVideoContent?
-    private let playbackStartDisposable = MetaDisposable()
+    private var avatarVideoNode: AvatarVideoNode?
+        
     private var cachedDataDisposable = MetaDisposable()
     private var hierarchyTrackingLayer: HierarchyTrackingLayer?
-    private var videoLoopCount = 0
     
     private var trackingIsInHierarchy: Bool = false {
         didSet {
             if self.trackingIsInHierarchy != oldValue {
                 Queue.mainQueue().justDispatch {
                     if self.trackingIsInHierarchy {
-                        self.videoLoopCount = 0
+                        self.avatarVideoNode?.resetPlayback()
                     }
                     self.updateVideoVisibility()
                 }
@@ -459,10 +459,11 @@ final class ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
         }
     }
     
-    init(peerId: PeerId, peer: Peer?, messageReference: MessageReference?, presentationData: ChatPresentationData, context: AccountContext, controllerInteraction: ChatControllerInteraction, synchronousLoad: Bool) {
+    init(peerId: PeerId, peer: Peer?, messageReference: MessageReference?, adMessageId: EngineMessage.Id?, presentationData: ChatPresentationData, context: AccountContext, controllerInteraction: ChatControllerInteraction, synchronousLoad: Bool) {
         self.peerId = peerId
         self.peer = peer
         self.messageReference = messageReference
+        self.adMessageId = adMessageId
         self.presentationData = presentationData
         self.context = context
         self.controllerInteraction = controllerInteraction
@@ -487,7 +488,7 @@ final class ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
                 return
             }
             var messageId: MessageId?
-            if let messageReference = messageReference, case let .message(_, id, _, _, _) = messageReference.content {
+            if let messageReference = messageReference, case let .message(_, _, id, _, _, _) = messageReference.content {
                 messageId = id
             }
             strongSelf.controllerInteraction.openPeerContextMenu(peer, messageId, strongSelf.containerNode, strongSelf.containerNode.bounds, gesture)
@@ -498,7 +499,6 @@ final class ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
     
     deinit {
         self.cachedDataDisposable.dispose()
-        self.playbackStartDisposable.dispose()
     }
 
     func setCustomLetters(context: AccountContext, theme: PresentationTheme, synchronousLoad: Bool, letters: [String], emptyColor: UIColor) {
@@ -516,22 +516,41 @@ final class ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
         }
         self.avatarNode.setPeer(context: context, theme: theme, peer: EnginePeer(peer), authorOfMessage: authorOfMessage, overrideImage: overrideImage, emptyColor: emptyColor, synchronousLoad: synchronousLoad, displayDimensions: CGSize(width: 38.0, height: 38.0))
         
-        if peer.isPremium {
+        if peer.isPremium && context.sharedContext.energyUsageSettings.autoplayVideo {
             self.cachedDataDisposable.set((context.account.postbox.peerView(id: peer.id)
             |> deliverOnMainQueue).start(next: { [weak self] peerView in
                 guard let strongSelf = self else {
                     return
                 }
-                let cachedPeerData = peerView.cachedData
-                if let cachedPeerData = cachedPeerData as? CachedUserData {
-                    if let photo = cachedPeerData.photo, let video = photo.videoRepresentations.last, let peerReference = PeerReference(peer) {
-                        let videoId = photo.id?.id ?? peer.id.id._internalGetInt64Value()
-                        let videoFileReference = FileMediaReference.avatarList(peer: peerReference, media: TelegramMediaFile(fileId: MediaId(namespace: Namespaces.Media.LocalFile, id: 0), partialReference: nil, resource: video.resource, previewRepresentations: photo.representations, videoThumbnails: [], immediateThumbnailData: photo.immediateThumbnailData, mimeType: "video/mp4", size: nil, attributes: [.Animated, .Video(duration: 0, size: video.dimensions, flags: [])]))
-                        let videoContent = NativeVideoContent(id: .profileVideo(videoId, "\(Int32.random(in: 0 ..< Int32.max))"), fileReference: videoFileReference, streamVideo: isMediaStreamable(resource: video.resource) ? .conservative : .none, loopVideo: true, enableSound: false, fetchAutomatically: true, onlyFullSizeThumbnail: false, useLargeThumbnail: true, autoFetchFullSizeThumbnail: true, startTimestamp: video.startTimestamp, continuePlayingWithoutSoundOnLostAudioSession: false, placeholderColor: .clear, captureProtected: false)
-                        if videoContent.id != strongSelf.videoContent?.id {
-                            strongSelf.videoNode?.removeFromSupernode()
-                            strongSelf.videoContent = videoContent
+                
+                let cachedPeerData = peerView.cachedData as? CachedUserData
+                var personalPhoto: TelegramMediaImage?
+                var profilePhoto: TelegramMediaImage?
+                var isKnown = false
+                
+                if let cachedPeerData = cachedPeerData {
+                    if case let .known(maybePersonalPhoto) = cachedPeerData.personalPhoto {
+                        personalPhoto = maybePersonalPhoto
+                        isKnown = true
+                    }
+                    if case let .known(maybePhoto) = cachedPeerData.photo {
+                        profilePhoto = maybePhoto
+                        isKnown = true
+                    }
+                }
+                
+                if isKnown {
+                    let photo = personalPhoto ?? profilePhoto
+                    if let photo = photo, !photo.videoRepresentations.isEmpty || photo.emojiMarkup != nil {
+                        let videoNode: AvatarVideoNode
+                        if let current = strongSelf.avatarVideoNode {
+                            videoNode = current
+                        } else {
+                            videoNode = AvatarVideoNode(context: context)
+                            strongSelf.avatarNode.addSubnode(videoNode)
+                            strongSelf.avatarVideoNode = videoNode
                         }
+                        videoNode.update(peer: EnginePeer(peer), photo: photo, size: CGSize(width: 38.0, height: 38.0))
                         
                         if strongSelf.hierarchyTrackingLayer == nil {
                             let hierarchyTrackingLayer = HierarchyTrackingLayer()
@@ -552,23 +571,25 @@ final class ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
                             strongSelf.layer.addSublayer(hierarchyTrackingLayer)
                         }
                     } else {
-                        strongSelf.videoContent = nil
-                        
+                        if let avatarVideoNode = strongSelf.avatarVideoNode {
+                            avatarVideoNode.removeFromSupernode()
+                            strongSelf.avatarVideoNode = nil
+                        }
                         strongSelf.hierarchyTrackingLayer?.removeFromSuperlayer()
                         strongSelf.hierarchyTrackingLayer = nil
                     }
-                                            
                     strongSelf.updateVideoVisibility()
                 } else {
-                    let _ = context.engine.peers.fetchAndUpdateCachedPeerData(peerId: peer.id).start()
+                    if let photo = peer.largeProfileImage, photo.hasVideo {
+                        let _ = context.engine.peers.fetchAndUpdateCachedPeerData(peerId: peer.id).start()
+                    }
                 }
             }))
         } else {            
             self.cachedDataDisposable.set(nil)
-            self.videoContent = nil
             
-            self.videoNode?.removeFromSupernode()
-            self.videoNode = nil
+            self.avatarVideoNode?.removeFromSupernode()
+            self.avatarVideoNode = nil
             
             self.hierarchyTrackingLayer?.removeFromSuperlayer()
             self.hierarchyTrackingLayer = nil
@@ -633,87 +654,29 @@ final class ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
 
     @objc func tapGesture(_ recognizer: ListViewTapGestureRecognizer) {
         if case .ended = recognizer.state {
-            if self.peerId.namespace == Namespaces.Peer.Empty, case let .message(_, id, _, _, _) = self.messageReference?.content {
+            if self.peerId.namespace == Namespaces.Peer.Empty, case let .message(_, _, id, _, _, _) = self.messageReference?.content {
                 self.controllerInteraction.displayMessageTooltip(id, self.presentationData.strings.Conversation_ForwardAuthorHiddenTooltip, self, self.avatarNode.frame)
-            } else {
-                if let channel = self.peer as? TelegramChannel, case .broadcast = channel.info {
-                    self.controllerInteraction.openPeer(self.peerId, .chat(textInputState: nil, subject: nil, peekData: nil), self.messageReference, false, nil)
+            } else if let peer = self.peer {
+                if let adMessageId = self.adMessageId {
+                    self.controllerInteraction.activateAdAction(adMessageId)
                 } else {
-                    self.controllerInteraction.openPeer(self.peerId, .info, self.messageReference, false, nil)
+                    if let channel = peer as? TelegramChannel, case .broadcast = channel.info {
+                        self.controllerInteraction.openPeer(EnginePeer(peer), .chat(textInputState: nil, subject: nil, peekData: nil), self.messageReference, .default)
+                    } else {
+                        self.controllerInteraction.openPeer(EnginePeer(peer), .info, self.messageReference, .groupParticipant)
+                    }
                 }
             }
         }
     }
     
     private func updateVideoVisibility() {
-        let context = self.context
         let isVisible = self.trackingIsInHierarchy
-        if isVisible, let videoContent = self.videoContent, self.videoLoopCount != maxVideoLoopCount {
-            if self.videoNode == nil {
-                let mediaManager = context.sharedContext.mediaManager
-                let videoNode = UniversalVideoNode(postbox: context.account.postbox, audioSession: mediaManager.audioSession, manager: mediaManager.universalVideoManager, decoration: GalleryVideoDecoration(), content: videoContent, priority: .embedded)
-                videoNode.clipsToBounds = true
-                videoNode.isUserInteractionEnabled = false
-                videoNode.isHidden = true
-                videoNode.playbackCompleted = { [weak self] in
-                    Queue.mainQueue().async {
-                        if let strongSelf = self {
-                            strongSelf.videoLoopCount += 1
-                            if strongSelf.videoLoopCount == maxVideoLoopCount {
-                                if let videoNode = strongSelf.videoNode {
-                                    strongSelf.videoNode = nil
-                                    videoNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak videoNode] _ in
-                                        videoNode?.removeFromSupernode()
-                                    })
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                if let _ = videoContent.startTimestamp {
-                    self.playbackStartDisposable.set((videoNode.status
-                    |> map { status -> Bool in
-                        if let status = status, case .playing = status.status {
-                            return true
-                        } else {
-                            return false
-                        }
-                    }
-                    |> filter { playing in
-                        return playing
-                    }
-                    |> take(1)
-                    |> deliverOnMainQueue).start(completed: { [weak self] in
-                        if let strongSelf = self {
-                            Queue.mainQueue().after(0.15) {
-                                strongSelf.videoNode?.isHidden = false
-                            }
-                        }
-                    }))
-                } else {
-                    self.playbackStartDisposable.set(nil)
-                    videoNode.isHidden = false
-                }
-                videoNode.layer.cornerRadius = self.avatarNode.frame.size.width / 2.0
-                if #available(iOS 13.0, *) {
-                    videoNode.layer.cornerCurve = .circular
-                }
-                
-                videoNode.canAttachContent = true
-                videoNode.play()
-                
-                self.containerNode.insertSubnode(videoNode, aboveSubnode: self.avatarNode)
-                self.videoNode = videoNode
-            }
-        } else if let videoNode = self.videoNode {
-            self.videoNode = nil
-            videoNode.removeFromSupernode()
-        }
-        
-        if let videoNode = self.videoNode {
-            videoNode.updateLayout(size: self.avatarNode.frame.size, transition: .immediate)
-            videoNode.frame = self.avatarNode.frame
+        self.avatarVideoNode?.updateVisibility(isVisible)
+      
+        if let videoNode = self.avatarVideoNode {
+            videoNode.updateLayout(size: self.avatarNode.frame.size, cornerRadius: self.avatarNode.frame.size.width / 2.0, transition: .immediate)
+            videoNode.frame = self.avatarNode.bounds
         }
     }
 }

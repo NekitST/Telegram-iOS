@@ -184,7 +184,6 @@ class WebSearchControllerNode: ASDisplayNode {
     var cancel: (() -> Void)?
     var dismissInput: (() -> Void)?
     
-    var presentStickers: ((@escaping (TelegramMediaFile, Bool, UIView, CGRect) -> Void) -> TGPhotoPaintStickersScreen?)?
     var getCaptionPanelView: () -> TGCaptionPanelView? = { return nil }
     
     init(controller: WebSearchController, context: AccountContext, presentationData: PresentationData, controllerInteraction: WebSearchControllerInteraction, peer: EnginePeer?, chatLocation: ChatLocation?, mode: WebSearchMode, attachment: Bool) {
@@ -246,9 +245,9 @@ class WebSearchControllerNode: ASDisplayNode {
         self.addSubnode(self.segmentedContainerNode)
         self.segmentedContainerNode.addSubnode(self.segmentedBackgroundNode)
         self.segmentedContainerNode.addSubnode(self.segmentedSeparatorNode)
-        if case .media = mode {
-            self.segmentedContainerNode.addSubnode(self.segmentedControlNode)
-        }
+//        if case .media = mode {
+//            self.segmentedContainerNode.addSubnode(self.segmentedControlNode)
+//        }
         if !attachment {
             self.addSubnode(self.toolbarBackgroundNode)
             self.addSubnode(self.toolbarSeparatorNode)
@@ -630,7 +629,7 @@ class WebSearchControllerNode: ASDisplayNode {
                         existingIds.insert(result.id)
                     }
                 }
-                let mergedResults = ChatContextResultCollection(botId: currentProcessedResults.botId, peerId: currentProcessedResults.peerId, query: currentProcessedResults.query, geoPoint: currentProcessedResults.geoPoint, queryId: nextResults.results.queryId, nextOffset: nextResults.results.nextOffset, presentation: currentProcessedResults.presentation, switchPeer: currentProcessedResults.switchPeer, results: results, cacheTimeout: currentProcessedResults.cacheTimeout)
+                let mergedResults = ChatContextResultCollection(botId: currentProcessedResults.botId, peerId: currentProcessedResults.peerId, query: currentProcessedResults.query, geoPoint: currentProcessedResults.geoPoint, queryId: nextResults.results.queryId, nextOffset: nextResults.results.nextOffset, presentation: currentProcessedResults.presentation, switchPeer: currentProcessedResults.switchPeer, webView: currentProcessedResults.webView, results: results, cacheTimeout: currentProcessedResults.cacheTimeout)
                 strongSelf.currentProcessedResults = mergedResults
                 strongSelf.results.set(mergedResults)
             }))
@@ -733,7 +732,7 @@ class WebSearchControllerNode: ASDisplayNode {
         if self.controllerInteraction.selectionState != nil {
             if let state = self.webSearchInterfaceState.state, state.scope == .images {
                 if let results = self.currentProcessedResults?.results {
-                    presentLegacyWebSearchGallery(context: self.context, peer: self.peer, chatLocation: self.chatLocation, presentationData: self.presentationData, results: results, current: currentResult, selectionContext: self.controllerInteraction.selectionState, editingContext: self.controllerInteraction.editingState, updateHiddenMedia: { [weak self] id in
+                    presentLegacyWebSearchGallery(context: self.context, peer: self.peer, threadTitle: nil, chatLocation: self.chatLocation, presentationData: self.presentationData, results: results, current: currentResult, selectionContext: self.controllerInteraction.selectionState, editingContext: self.controllerInteraction.editingState, updateHiddenMedia: { [weak self] id in
                         self?.hiddenMediaId.set(.single(id))
                     }, initialLayout: self.containerLayout?.0, transitionHostView: { [weak self] in
                         return self?.gridNode.view
@@ -744,7 +743,7 @@ class WebSearchControllerNode: ASDisplayNode {
                             strongSelf.controllerInteraction.sendSelected(result, false, nil)
                             strongSelf.cancel?()
                         }
-                    }, presentStickers: self.presentStickers, getCaptionPanelView: self.getCaptionPanelView, present: present)
+                    }, getCaptionPanelView: self.getCaptionPanelView, present: present)
                 }
             } else {
                 if let results = self.currentProcessedResults?.results {

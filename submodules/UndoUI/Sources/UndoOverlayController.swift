@@ -22,11 +22,11 @@ public enum UndoOverlayContent {
     case chatRemovedFromFolder(chatTitle: String, folderTitle: String)
     case messagesUnpinned(title: String, text: String, undo: Bool, isHidden: Bool)
     case setProximityAlert(title: String, text: String, cancelled: Bool)
-    case invitedToVoiceChat(context: AccountContext, peer: EnginePeer, text: String, action: String?)
+    case invitedToVoiceChat(context: AccountContext, peer: EnginePeer, text: String, action: String?, duration: Double)
     case linkCopied(text: String)
     case banned(text: String)
     case importedMessage(text: String)
-    case audioRate(slowdown: Bool, text: String)
+    case audioRate(rate: CGFloat, text: String)
     case forward(savedMessages: Bool, text: String)
     case autoDelete(isOn: Bool, title: String?, text: String)
     case gigagroupConversion(text: String)
@@ -39,9 +39,10 @@ public enum UndoOverlayContent {
     case mediaSaved(text: String)
     case paymentSent(currencyValue: String, itemTitle: String)
     case inviteRequestSent(title: String, text: String)
-    case image(image: UIImage, text: String)
+    case image(image: UIImage, title: String?, text: String, round: Bool, undoText: String?)
     case notificationSoundAdded(title: String, text: String, action: (() -> Void)?)
-    case universal(animation: String, scale: CGFloat, colors: [String: UIColor], title: String?, text: String)
+    case universal(animation: String, scale: CGFloat, colors: [String: UIColor], title: String?, text: String, customUndoText: String?, timeout: Double?)
+    case peers(context: AccountContext, peers: [EnginePeer], title: String?, text: String, customUndoText: String?)
 }
 
 public enum UndoOverlayAction {

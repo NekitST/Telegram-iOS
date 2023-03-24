@@ -50,7 +50,7 @@
     UIView *parentView = [self _parentView];
     
     id<TGCaptionPanelView> inputPanel = nil;
-    if (_stickersContext) {
+    if (_stickersContext && _stickersContext.captionPanelView != nil) {
         inputPanel = _stickersContext.captionPanelView();
     }
     _inputPanel = inputPanel;
@@ -84,7 +84,7 @@
     
     _inputPanel.heightUpdated = ^(BOOL animated) {
         __strong TGPhotoCaptionInputMixin *strongSelf = weakSelf;
-        [strongSelf updateLayoutWithFrame:strongSelf->_currentFrame edgeInsets:strongSelf->_currentEdgeInsets];
+        [strongSelf updateLayoutWithFrame:strongSelf->_currentFrame edgeInsets:strongSelf->_currentEdgeInsets animated:animated];
     };
     
     _inputPanelView = inputPanel.view;
@@ -204,7 +204,7 @@
     
     CGRect frame = _currentFrame;
     UIEdgeInsets edgeInsets = _currentEdgeInsets;
-    CGFloat panelHeight = [_inputPanel updateLayoutSize:frame.size sideInset:0.0];
+    CGFloat panelHeight = [_inputPanel updateLayoutSize:frame.size sideInset:0.0 animated:false];
     [UIView animateWithDuration:duration delay:0.0f options:(curve << 16) animations:^{
         _inputPanelView.frame = CGRectMake(edgeInsets.left, frame.size.height - panelHeight - MAX(edgeInsets.bottom, _keyboardHeight), frame.size.width, panelHeight);
         
@@ -219,12 +219,12 @@
         self.keyboardHeightChanged(keyboardHeight, duration, curve);
 }
 
-- (void)updateLayoutWithFrame:(CGRect)frame edgeInsets:(UIEdgeInsets)edgeInsets
+- (void)updateLayoutWithFrame:(CGRect)frame edgeInsets:(UIEdgeInsets)edgeInsets animated:(bool)animated
 {
     _currentFrame = frame;
     _currentEdgeInsets = edgeInsets;
     
-    CGFloat panelHeight = [_inputPanel updateLayoutSize:frame.size sideInset:0.0];
+    CGFloat panelHeight = [_inputPanel updateLayoutSize:frame.size sideInset:0.0 animated:animated];
     
     CGFloat y = 0.0;
     if (frame.size.width > frame.size.height && !TGIsPad()) {
@@ -233,13 +233,20 @@
         y = edgeInsets.top + frame.size.height - panelHeight - MAX(edgeInsets.bottom, _keyboardHeight);
     }
     
-    _inputPanelView.frame = CGRectMake(edgeInsets.left, y, frame.size.width, panelHeight);
-    
     CGFloat backgroundHeight = panelHeight;
     if (_keyboardHeight > 0.0) {
         backgroundHeight += _keyboardHeight - edgeInsets.bottom;
     }
-    _backgroundView.frame = CGRectMake(edgeInsets.left, y, frame.size.width, backgroundHeight + 1.0);
+    
+    if (animated) {
+        [UIView animateWithDuration:0.2 delay:0.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+            _inputPanelView.frame = CGRectMake(edgeInsets.left, y, frame.size.width, panelHeight);
+            _backgroundView.frame = CGRectMake(edgeInsets.left, y, frame.size.width, backgroundHeight);
+        } completion:nil];
+    } else {
+        _inputPanelView.frame = CGRectMake(edgeInsets.left, y, frame.size.width, panelHeight);
+        _backgroundView.frame = CGRectMake(edgeInsets.left, y, frame.size.width, backgroundHeight);
+    }
 }
 
 @end

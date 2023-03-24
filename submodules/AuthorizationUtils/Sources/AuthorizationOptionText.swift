@@ -22,25 +22,25 @@ public func authorizationCurrentOptionText(_ type: SentAuthorizationCodeType, ph
         let bold = MarkdownAttributeSet(font: Font.semibold(fontSize), textColor: primaryColor)
         return parseMarkdownIntoAttributedString(strings.Login_ShortCallTitle, attributes: MarkdownAttributes(body: body, bold: bold, link: body, linkAttribute: { _ in nil }), textAlignment: .center)
     case .call:
-        return NSAttributedString(string: strings.Login_CodeSentCall, font: Font.regular(fontSize), textColor: primaryColor, paragraphAlignment: .center)
+        return parseMarkdownIntoAttributedString(strings.Login_CodeSentCallText(phoneNumber).string, attributes: attributes, textAlignment: .center)
     case .flashCall:
-        return NSAttributedString(string: strings.ChangePhoneNumberCode_Called, font: Font.regular(fontSize), textColor: primaryColor, paragraphAlignment: .center)
+        return parseMarkdownIntoAttributedString(strings.Login_CodeSentCallText(phoneNumber).string, attributes: attributes, textAlignment: .center)
     case .emailSetupRequired:
         return NSAttributedString(string: "", font: Font.regular(fontSize), textColor: primaryColor, paragraphAlignment: .center)
-    case let .email(emailPattern, _, _, _, _):
+    case let .email(emailPattern, _, _, _, _, _):
         let mutableString = NSAttributedString(string: strings.Login_EnterCodeEmailText(email ?? emailPattern).string, font: Font.regular(fontSize), textColor: primaryColor, paragraphAlignment: .center).mutableCopy() as! NSMutableAttributedString
-        
-        let string = mutableString.string
-        let nsString = string as NSString
-
         if let regex = try? NSRegularExpression(pattern: "\\*", options: []) {
-            let matches = regex.matches(in: string, options: [], range: NSMakeRange(0, nsString.length))
+            let matches = regex.matches(in: mutableString.string, options: [], range: NSMakeRange(0, mutableString.length))
             if let first = matches.first {
                 mutableString.addAttribute(NSAttributedString.Key(rawValue: TelegramTextAttributes.Spoiler), value: true, range: NSRange(location: first.range.location, length: matches.count))
             }
         }
 
         return mutableString
+    case .fragment:
+        return parseMarkdownIntoAttributedString(strings.Login_EnterCodeFragmentText(phoneNumber).string, attributes: attributes, textAlignment: .center)
+    case .firebase:
+        return parseMarkdownIntoAttributedString(strings.Login_EnterCodeSMSText(phoneNumber).string, attributes: attributes, textAlignment: .center)
     }
 }
 
@@ -68,6 +68,13 @@ public func authorizationNextOptionText(currentType: SentAuthorizationCodeType, 
             } else {
                 return (NSAttributedString(string: String(format: strings.ChangePhoneNumberCode_CallTimer(String(format: "%d:%.2d", minutes, seconds)).string, minutes, seconds), font: Font.regular(16.0), textColor: primaryColor, paragraphAlignment: .center), false)
             }
+        case .fragment:
+            if timeout <= 0 {
+                return (NSAttributedString(string: strings.Login_CodeSentSms, font: Font.regular(16.0), textColor: primaryColor, paragraphAlignment: .center), false)
+            } else {
+                let timeString = NSString(format: "%d:%.02d", Int(minutes), Int(seconds))
+                return (NSAttributedString(string: strings.Login_WillSendSms(timeString as String).string, font: Font.regular(16.0), textColor: primaryColor, paragraphAlignment: .center), false)
+            }
         }
     } else {
         switch currentType {
@@ -79,6 +86,8 @@ public func authorizationNextOptionText(currentType: SentAuthorizationCodeType, 
                 return (NSAttributedString(string: strings.Login_SendCodeViaCall, font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
             case .flashCall, .missedCall:
                 return (NSAttributedString(string: strings.Login_SendCodeViaFlashCall, font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
+            case .fragment:
+                return (NSAttributedString(string: "Send code via fragment", font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
             case .none:
                 return (NSAttributedString(string: strings.Login_HaveNotReceivedCodeInternal, font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
             }
@@ -90,6 +99,8 @@ public func authorizationNextOptionText(currentType: SentAuthorizationCodeType, 
                 return (NSAttributedString(string: strings.Login_SendCodeViaCall, font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
             case .flashCall, .missedCall:
                 return (NSAttributedString(string: strings.Login_SendCodeViaFlashCall, font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
+            case .fragment:
+                return (NSAttributedString(string: "Send code via fragment", font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
             case .none:
                 return (NSAttributedString(string: strings.Login_HaveNotReceivedCodeInternal, font: Font.regular(16.0), textColor: accentColor, paragraphAlignment: .center), true)
             }

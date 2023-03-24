@@ -8,7 +8,7 @@ import GZip
 import AppBundle
 import LegacyComponents
 
-private let sceneVersion: Int = 3
+private let sceneVersion: Int = 4
 
 private func deg2rad(_ number: Float) -> Float {
     return number * .pi / 180
@@ -461,20 +461,20 @@ class PremiumStarComponent: Component {
                     Queue.mainQueue().after(1.0) {
                         node.physicsField?.isActive = false
                         
-                        leftParticleSystem.birthRate = 12.0
-                        leftParticleSystem.particleVelocity = 1.2
+                        leftParticleSystem.birthRate = 15.0
+                        leftParticleSystem.particleVelocity = 1.0
                         leftParticleSystem.particleLifeSpan = 3.0
                         
-                        rightParticleSystem.birthRate = 12.0
-                        rightParticleSystem.particleVelocity = 1.2
+                        rightParticleSystem.birthRate = 15.0
+                        rightParticleSystem.particleVelocity = 1.0
                         rightParticleSystem.particleLifeSpan = 3.0
                         
-                        leftBottomParticleSystem.particleVelocity = 1.2
-                        leftBottomParticleSystem.birthRate = 7.0
+                        leftBottomParticleSystem.particleVelocity = 1.0
+                        leftBottomParticleSystem.birthRate = 10.0
                         leftBottomParticleSystem.particleLifeSpan = 5.0
                         
-                        rightBottomParticleSystem.particleVelocity = 1.2
-                        rightBottomParticleSystem.birthRate = 7.0
+                        rightBottomParticleSystem.particleVelocity = 1.0
+                        rightBottomParticleSystem.birthRate = 10.0
                         rightBottomParticleSystem.particleLifeSpan = 5.0
                         
                         let leftAnimation = POPBasicAnimation()

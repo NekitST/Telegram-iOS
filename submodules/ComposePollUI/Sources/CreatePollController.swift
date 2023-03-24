@@ -516,16 +516,89 @@ public final class ComposedPoll {
     }
 }
 
-private class CreatePollControllerImpl: ItemListController, AttachmentContainable {
+private final class CreatePollContext: AttachmentMediaPickerContext {
+    var selectionCount: Signal<Int, NoError> {
+        return .single(0)
+    }
+    
+    var caption: Signal<NSAttributedString?, NoError> {
+        return .single(nil)
+    }
+    
+    public var loadingProgress: Signal<CGFloat?, NoError> {
+        return .single(nil)
+    }
+    
+    public var mainButtonState: Signal<AttachmentMainButtonState?, NoError> {
+        return .single(nil)
+    }
+            
+    func setCaption(_ caption: NSAttributedString) {
+    }
+    
+    func send(mode: AttachmentMediaPickerSendMode, attachmentMode: AttachmentMediaPickerAttachmentMode) {
+    }
+    
+    func schedule() {
+    }
+    
+    func mainButtonAction() {
+    }
+}
+
+
+public class CreatePollControllerImpl: ItemListController, AttachmentContainable {
     public var requestAttachmentMenuExpansion: () -> Void = {}
     public var updateNavigationStack: (@escaping ([AttachmentContainable]) -> ([AttachmentContainable], AttachmentMediaPickerContext?)) -> Void = { _ in }
     public var updateTabBarAlpha: (CGFloat, ContainedViewLayoutTransition) -> Void = { _, _ in }
     public var cancelPanGesture: () -> Void = { }
     public var isContainerPanning: () -> Bool = { return false }
     public var isContainerExpanded: () -> Bool = { return false }
+    
+    public var mediaPickerContext: AttachmentMediaPickerContext? {
+        return CreatePollContext()
+    }
+    
+    fileprivate var stateValue: Atomic<CreatePollControllerState>?
+    
+    private var hasContent: Bool {
+        if let stateValue {
+            let state = stateValue.with { $0 }
+            var hasNonEmptyOptions = false
+            for i in 0 ..< state.options.count {
+                let optionText = state.options[i].item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !optionText.isEmpty {
+                    hasNonEmptyOptions = true
+                }
+            }
+            if hasNonEmptyOptions || !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return true
+            } else {
+                return false
+            }
+        } else {
+            return false
+        }
+    }
+    
+    var context: AccountContext?
+    public func requestDismiss(completion: @escaping () -> Void) {
+        if self.hasContent, let context = self.context {
+            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+            self.present(textAlertController(context: context, updatedPresentationData: nil, title: nil, text: presentationData.strings.CreatePoll_CancelConfirmation, actions: [TextAlertAction(type: .genericAction, title: presentationData.strings.Common_No, action: {}), TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_Yes, action: {
+                completion()
+            })]), in: .window(.root))
+        } else {
+            completion()
+        }
+    }
+    
+    public func shouldDismissImmediately() -> Bool {
+        return !self.hasContent
+    }
 }
 
-public func createPollController(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, peer: EnginePeer, isQuiz: Bool? = nil, completion: @escaping (ComposedPoll) -> Void) -> AttachmentContainable {
+public func createPollController(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, peer: EnginePeer, isQuiz: Bool? = nil, completion: @escaping (ComposedPoll) -> Void) -> CreatePollControllerImpl {
     var initialState = CreatePollControllerState()
     if let isQuiz = isQuiz {
         initialState.isQuiz = isQuiz
@@ -544,7 +617,6 @@ public func createPollController(context: AccountContext, updatedPresentationDat
     var ensureSolutionVisibleImpl: (() -> Void)?
     var ensureQuestionVisibleImpl: (() -> Void)?
     var displayQuizTooltipImpl: ((Bool) -> Void)?
-    var attemptNavigationImpl: (() -> Bool)?
     
     let actionsDisposable = DisposableSet()
     
@@ -888,9 +960,7 @@ public func createPollController(context: AccountContext, updatedPresentationDat
         })
         
         let leftNavigationButton = ItemListNavigationButton(content: .text(presentationData.strings.Common_Cancel), style: .regular, enabled: true, action: {
-            if let attemptNavigationImpl = attemptNavigationImpl, attemptNavigationImpl() {
-                dismissImpl?()
-            }
+            dismissImpl?()
         })
         
         let optionIds = state.options.map { $0.item.id }
@@ -931,6 +1001,8 @@ public func createPollController(context: AccountContext, updatedPresentationDat
     
     weak var currentTooltipController: TooltipController?
     let controller = CreatePollControllerImpl(context: context, state: signal)
+    controller.context = context
+    controller.stateValue = stateValue
     controller.navigationPresentation = .modal
     controller.visibleBottomContentOffsetChanged = { [weak controller] _ in
         controller?.updateTabBarAlpha(1.0, .immediate)
@@ -1158,31 +1230,6 @@ public func createPollController(context: AccountContext, updatedPresentationDat
         
         return .single(didReorder)
     })
-    attemptNavigationImpl = {
-        let state = stateValue.with { $0 }
-        var hasNonEmptyOptions = false
-        for i in 0 ..< state.options.count {
-            let optionText = state.options[i].item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !optionText.isEmpty {
-                hasNonEmptyOptions = true
-            }
-        }
-        if hasNonEmptyOptions || !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-            presentControllerImpl?(textAlertController(context: context, updatedPresentationData: updatedPresentationData, title: nil, text: presentationData.strings.CreatePoll_CancelConfirmation, actions: [TextAlertAction(type: .genericAction, title: presentationData.strings.Common_No, action: {}), TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_Yes, action: {
-                dismissImpl?()
-            })]), nil)
-            return false
-        } else {
-            return true
-        }
-    }
-    controller.attemptNavigation = { _ in
-        if let attemptNavigationImpl = attemptNavigationImpl, attemptNavigationImpl() {
-            return true
-        }
-        return false
-    }
     dismissInputImpl = { [weak controller] in
         controller?.view.endEditing(true)
     }

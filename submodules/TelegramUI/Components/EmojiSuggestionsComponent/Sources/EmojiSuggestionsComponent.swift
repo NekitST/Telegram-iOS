@@ -59,7 +59,7 @@ public final class EmojiSuggestionsComponent: Component {
                 }
                 for attribute in item.file.attributes {
                     switch attribute {
-                    case let .CustomEmoji(_, alt, _):
+                    case let .CustomEmoji(_, _, alt, _):
                         if alt == query || (!normalizedQuery.isEmpty && alt == normalizedQuery) {
                             if !item.file.isPremiumEmoji || hasPremium {
                                 if !existingIds.contains(item.file.fileId) {
@@ -78,7 +78,7 @@ public final class EmojiSuggestionsComponent: Component {
                 for item in featuredPack.topItems {
                     for attribute in item.file.attributes {
                         switch attribute {
-                        case let .CustomEmoji(_, alt, _):
+                        case let .CustomEmoji(_, _, alt, _):
                             if alt == query || (!normalizedQuery.isEmpty && alt == normalizedQuery) {
                                 if !item.file.isPremiumEmoji || hasPremium {
                                     if !existingIds.contains(item.file.fileId) {
@@ -107,6 +107,7 @@ public final class EmojiSuggestionsComponent: Component {
     
     public init(
         context: AccountContext,
+        userLocation: MediaResourceUserLocation,
         theme: PresentationTheme,
         animationCache: AnimationCache,
         animationRenderer: MultiAnimationRenderer,
@@ -232,6 +233,31 @@ public final class EmojiSuggestionsComponent: Component {
             fatalError("init(coder:) has not been implemented")
         }
         
+        public func item(at point: CGPoint) -> (CALayer, TelegramMediaFile)? {
+            let location = self.convert(point, to: self.scrollView)
+            if self.scrollView.bounds.contains(location) {
+                var closestFile: (file: TelegramMediaFile, layer: CALayer, distance: CGFloat)?
+                for (_, itemLayer) in self.visibleLayers {
+                    guard let file = itemLayer.file else {
+                        continue
+                    }
+                    let distance = abs(location.x - itemLayer.position.x)
+                    if let (_, _, currentDistance) = closestFile {
+                        if distance < currentDistance {
+                            closestFile = (file, itemLayer, distance)
+                        }
+                    } else {
+                        closestFile = (file, itemLayer, distance)
+                    }
+                }
+                if let (file, itemLayer, _) = closestFile {
+                    return (itemLayer, file)
+                }
+            }
+            
+            return nil
+        }
+        
         @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
             if case .ended = recognizer.state {
                 let location = recognizer.location(in: self.scrollView)
@@ -280,16 +306,19 @@ public final class EmojiSuggestionsComponent: Component {
                     let itemLayer: InlineStickerItemLayer
                     if let current = self.visibleLayers[item.fileId] {
                         itemLayer = current
+                        itemLayer.dynamicColor = component.theme.list.itemPrimaryTextColor
                     } else {
                         itemLayer = InlineStickerItemLayer(
                             context: component.context,
+                            userLocation: .other,
                             attemptSynchronousLoad: synchronousLoad,
                             emoji: ChatTextInputTextCustomEmojiAttribute(interactivelySelectedFromPackId: nil, fileId: item.fileId.id, file: item),
                             file: item,
                             cache: component.animationCache,
                             renderer: component.animationRenderer,
                             placeholderColor: component.theme.list.mediaPlaceholderColor,
-                            pointSize: itemFrame.size
+                            pointSize: itemFrame.size,
+                            dynamicColor: component.theme.list.itemPrimaryTextColor
                         )
                         self.visibleLayers[item.fileId] = itemLayer
                         self.scrollView.layer.addSublayer(itemLayer)

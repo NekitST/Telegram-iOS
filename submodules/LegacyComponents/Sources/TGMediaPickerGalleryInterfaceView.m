@@ -363,7 +363,9 @@
         _landscapeToolbarView.cancelPressed = toolbarCancelPressed;
         _landscapeToolbarView.donePressed = toolbarDonePressed;
         _landscapeToolbarView.doneLongPressed = toolbarDoneLongPressed;
-        [_wrapperView addSubview:_landscapeToolbarView];
+        
+        if ([UIDevice currentDevice].userInterfaceIdiom != UIUserInterfaceIdiomPad)
+            [_wrapperView addSubview:_landscapeToolbarView];
     }
     return self;
 }
@@ -1644,7 +1646,7 @@
     
     UIEdgeInsets captionEdgeInsets = screenEdges;
     captionEdgeInsets.bottom = _portraitToolbarView.frame.size.height;
-    [_captionMixin updateLayoutWithFrame:self.bounds edgeInsets:captionEdgeInsets];
+    [_captionMixin updateLayoutWithFrame:self.bounds edgeInsets:captionEdgeInsets animated:false];
     
     switch (orientation)
     {

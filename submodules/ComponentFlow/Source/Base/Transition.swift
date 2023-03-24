@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import Display
 
 #if targetEnvironment(simulator)
 @_silgen_name("UIAnimationDragCoefficient") func UIAnimationDragCoefficient() -> Float
@@ -15,105 +16,31 @@ private extension UIView {
     }
 }
 
-@objc private class CALayerAnimationDelegate: NSObject, CAAnimationDelegate {
-    private let keyPath: String?
-    var completion: ((Bool) -> Void)?
-
-    init(animation: CAAnimation, completion: ((Bool) -> Void)?) {
-        if let animation = animation as? CABasicAnimation {
-            self.keyPath = animation.keyPath
-        } else {
-            self.keyPath = nil
-        }
-        self.completion = completion
-
-        super.init()
-    }
-
-    @objc func animationDidStop(_ anim: CAAnimation, finished flag: Bool) {
-        if let anim = anim as? CABasicAnimation {
-            if anim.keyPath != self.keyPath {
-                return
-            }
-        }
-        if let completion = self.completion {
-            completion(flag)
-        }
-    }
-}
-
-private func makeSpringAnimation(keyPath: String) -> CASpringAnimation {
-    let springAnimation = CASpringAnimation(keyPath: keyPath)
-    springAnimation.mass = 3.0;
-    springAnimation.stiffness = 1000.0
-    springAnimation.damping = 500.0
-    springAnimation.duration = 0.5
-    springAnimation.timingFunction = CAMediaTimingFunction(name: .linear)
-    return springAnimation
-}
-
 private extension CALayer {
-    func makeAnimation(from: AnyObject?, to: AnyObject, keyPath: String, duration: Double, delay: Double, curve: Transition.Animation.Curve, removeOnCompletion: Bool, additive: Bool, completion: ((Bool) -> Void)? = nil) -> CAAnimation {
+    func animate(from: AnyObject, to: AnyObject, keyPath: String, duration: Double, delay: Double, curve: Transition.Animation.Curve, removeOnCompletion: Bool, additive: Bool, completion: ((Bool) -> Void)? = nil) {
+        let timingFunction: String
+        let mediaTimingFunction: CAMediaTimingFunction?
         switch curve {
         case .spring:
-            let animation = makeSpringAnimation(keyPath: keyPath)
-            animation.fromValue = from
-            animation.toValue = to
-            animation.isRemovedOnCompletion = removeOnCompletion
-            animation.fillMode = .forwards
-            if let completion = completion {
-                animation.delegate = CALayerAnimationDelegate(animation: animation, completion: completion)
-            }
-
-            let k = Float(UIView.animationDurationFactor)
-            var speed: Float = 1.0
-            if k != 0 && k != 1 {
-                speed = Float(1.0) / k
-            }
-
-            animation.speed = speed * Float(animation.duration / duration)
-            animation.isAdditive = additive
-
-            if !delay.isZero {
-                animation.beginTime = self.convertTime(CACurrentMediaTime(), from: nil) + delay * UIView.animationDurationFactor
-                animation.fillMode = .both
-            }
-
-            return animation
+            timingFunction = kCAMediaTimingFunctionSpring
+            mediaTimingFunction = nil
         default:
-            let k = Float(UIView.animationDurationFactor)
-            var speed: Float = 1.0
-            if k != 0 && k != 1 {
-                speed = Float(1.0) / k
-            }
-
-            let animation = CABasicAnimation(keyPath: keyPath)
-            if let from = from {
-                animation.fromValue = from
-            }
-            animation.toValue = to
-            animation.duration = duration
-            animation.timingFunction = curve.asTimingFunction()
-            animation.isRemovedOnCompletion = removeOnCompletion
-            animation.fillMode = .both
-            animation.speed = speed
-            animation.isAdditive = additive
-            if let completion = completion {
-                animation.delegate = CALayerAnimationDelegate(animation: animation, completion: completion)
-            }
-
-            if !delay.isZero {
-                animation.beginTime = self.convertTime(CACurrentMediaTime(), from: nil) + delay * UIView.animationDurationFactor
-                animation.fillMode = .both
-            }
-
-            return animation
+            timingFunction = CAMediaTimingFunctionName.easeInEaseOut.rawValue
+            mediaTimingFunction = curve.asTimingFunction()
         }
-    }
-
-    func animate(from: AnyObject, to: AnyObject, keyPath: String, duration: Double, delay: Double, curve: Transition.Animation.Curve, removeOnCompletion: Bool, additive: Bool, completion: ((Bool) -> Void)? = nil) {
-        let animation = self.makeAnimation(from: from, to: to, keyPath: keyPath, duration: duration, delay: delay, curve: curve, removeOnCompletion: removeOnCompletion, additive: additive, completion: completion)
-        self.add(animation, forKey: additive ? nil : keyPath)
+        
+        self.animate(
+            from: from,
+            to: to,
+            keyPath: keyPath,
+            timingFunction: timingFunction,
+            duration: duration,
+            delay: delay,
+            mediaTimingFunction: mediaTimingFunction,
+            removeOnCompletion: removeOnCompletion,
+            additive: additive,
+            completion: completion
+        )
     }
 }
 
@@ -192,6 +119,10 @@ public struct Transition {
     public static func easeInOut(duration: Double) -> Transition {
         return Transition(animation: .curve(duration: duration, curve: .easeInOut))
     }
+    
+    public static func spring(duration: Double) -> Transition {
+        return Transition(animation: .curve(duration: duration, curve: .spring))
+    }
 
     public init(animation: Animation) {
         self.animation = animation
@@ -209,21 +140,30 @@ public struct Transition {
             //view.layer.position = CGPoint(x: frame.midX, y: frame.midY)
             view.layer.removeAnimation(forKey: "position")
             view.layer.removeAnimation(forKey: "bounds")
+            view.layer.removeAnimation(forKey: "bounds.size")
             completion?(true)
         case .curve:
-            let previousFrame: CGRect
-            if (view.layer.animation(forKey: "position") != nil || view.layer.animation(forKey: "bounds") != nil), let presentation = view.layer.presentation() {
-                previousFrame = presentation.frame
+            let previousPosition: CGPoint
+            let previousBounds: CGRect
+            if (view.layer.animation(forKey: "position") != nil || view.layer.animation(forKey: "bounds") != nil || view.layer.animation(forKey: "bounds.size") != nil), let presentation = view.layer.presentation() {
+                previousPosition = presentation.position
+                previousBounds = presentation.bounds
             } else {
-                previousFrame = view.frame
+                previousPosition = view.layer.position
+                previousBounds = view.layer.bounds
             }
             
             view.frame = frame
             //view.bounds = CGRect(origin: previousBounds.origin, size: frame.size)
             //view.center = CGPoint(x: frame.midX, y: frame.midY)
+            
+            let anchorPoint = view.layer.anchorPoint
+            let updatedPosition = CGPoint(x: frame.minX + frame.width * anchorPoint.x, y: frame.minY + frame.height * anchorPoint.y)
 
-            self.animatePosition(view: view, from: CGPoint(x: previousFrame.midX, y: previousFrame.midY), to: CGPoint(x: frame.midX, y: frame.midY), completion: completion)
-            self.animateBounds(view: view, from: CGRect(origin: view.bounds.origin, size: previousFrame.size), to: CGRect(origin: view.bounds.origin, size: frame.size))
+            self.animatePosition(view: view, from: previousPosition, to: updatedPosition, completion: completion)
+            if previousBounds.size != frame.size {
+                self.animateBoundsSize(view: view, from: previousBounds.size, to: frame.size)
+            }
         }
     }
     
@@ -266,10 +206,12 @@ public struct Transition {
         case .none:
             view.bounds = bounds
             view.layer.removeAnimation(forKey: "bounds")
+            view.layer.removeAnimation(forKey: "bounds.origin")
+            view.layer.removeAnimation(forKey: "bounds.size")
             completion?(true)
         case .curve:
             let previousBounds: CGRect
-            if view.layer.animation(forKey: "bounds") != nil, let presentation = view.layer.presentation() {
+            if (view.layer.animation(forKey: "bounds") != nil || view.layer.animation(forKey: "bounds.origin") != nil || view.layer.animation(forKey: "bounds.size") != nil), let presentation = view.layer.presentation() {
                 previousBounds = presentation.bounds
             } else {
                 previousBounds = view.layer.bounds
@@ -277,6 +219,30 @@ public struct Transition {
             view.bounds = bounds
 
             self.animateBounds(view: view, from: previousBounds, to: view.bounds, completion: completion)
+        }
+    }
+    
+    public func setBoundsOrigin(view: UIView, origin: CGPoint, completion: ((Bool) -> Void)? = nil) {
+        if view.bounds.origin == origin {
+            completion?(true)
+            return
+        }
+        switch self.animation {
+        case .none:
+            view.bounds = CGRect(origin: origin, size: view.bounds.size)
+            view.layer.removeAnimation(forKey: "bounds")
+            view.layer.removeAnimation(forKey: "bounds.origin")
+            completion?(true)
+        case .curve:
+            let previousOrigin: CGPoint
+            if (view.layer.animation(forKey: "bounds") != nil || view.layer.animation(forKey: "bounds.origin") != nil), let presentation = view.layer.presentation() {
+                previousOrigin = presentation.bounds.origin
+            } else {
+                previousOrigin = view.layer.bounds.origin
+            }
+            view.bounds = CGRect(origin: origin, size: view.bounds.size)
+
+            self.animateBoundsOrigin(view: view, from: previousOrigin, to: origin, completion: completion)
         }
     }
     
@@ -372,7 +338,7 @@ public struct Transition {
         }
     }
     
-    public func attachAnimation(view: UIView, completion: @escaping (Bool) -> Void) {
+    public func attachAnimation(view: UIView, id: String, completion: @escaping (Bool) -> Void) {
         switch self.animation {
         case .none:
             completion(true)
@@ -380,7 +346,7 @@ public struct Transition {
             view.layer.animate(
                 from: 0.0 as NSNumber,
                 to: 1.0 as NSNumber,
-                keyPath: "attached\(UInt32.random(in: 0 ... UInt32.max))",
+                keyPath: id,
                 duration: duration,
                 delay: 0.0,
                 curve: curve,
@@ -391,11 +357,11 @@ public struct Transition {
         }
     }
     
-    public func setAlpha(view: UIView, alpha: CGFloat, completion: ((Bool) -> Void)? = nil) {
-        self.setAlpha(layer: view.layer, alpha: alpha, completion: completion)
+    public func setAlpha(view: UIView, alpha: CGFloat, delay: Double = 0.0, completion: ((Bool) -> Void)? = nil) {
+        self.setAlpha(layer: view.layer, alpha: alpha, delay: delay, completion: completion)
     }
     
-    public func setAlpha(layer: CALayer, alpha: CGFloat, completion: ((Bool) -> Void)? = nil) {
+    public func setAlpha(layer: CALayer, alpha: CGFloat, delay: Double = 0.0, completion: ((Bool) -> Void)? = nil) {
         if layer.opacity == Float(alpha) {
             completion?(true)
             return
@@ -408,15 +374,15 @@ public struct Transition {
         case .curve:
             let previousAlpha = layer.presentation()?.opacity ?? layer.opacity
             layer.opacity = Float(alpha)
-            self.animateAlpha(layer: layer, from: CGFloat(previousAlpha), to: alpha, completion: completion)
+            self.animateAlpha(layer: layer, from: CGFloat(previousAlpha), to: alpha, delay: delay, completion: completion)
         }
     }
     
-    public func setScale(view: UIView, scale: CGFloat, completion: ((Bool) -> Void)? = nil) {
-        self.setScale(layer: view.layer, scale: scale, completion: completion)
+    public func setScale(view: UIView, scale: CGFloat, delay: Double = 0.0, completion: ((Bool) -> Void)? = nil) {
+        self.setScale(layer: view.layer, scale: scale, delay: delay, completion: completion)
     }
     
-    public func setScale(layer: CALayer, scale: CGFloat, completion: ((Bool) -> Void)? = nil) {
+    public func setScale(layer: CALayer, scale: CGFloat, delay: Double = 0.0, completion: ((Bool) -> Void)? = nil) {
         let t = layer.presentation()?.transform ?? layer.transform
         let currentScale = sqrt((t.m11 * t.m11) + (t.m12 * t.m12) + (t.m13 * t.m13))
         if currentScale == scale {
@@ -435,7 +401,7 @@ public struct Transition {
                 to: scale as NSNumber,
                 keyPath: "transform.scale",
                 duration: duration,
-                delay: 0.0,
+                delay: delay,
                 curve: curve,
                 removeOnCompletion: true,
                 additive: false,
@@ -476,19 +442,23 @@ public struct Transition {
     }
     
     public func setSublayerTransform(view: UIView, transform: CATransform3D, completion: ((Bool) -> Void)? = nil) {
+        self.setSublayerTransform(layer: view.layer, transform: transform, completion: completion)
+    }
+    
+    public func setSublayerTransform(layer: CALayer, transform: CATransform3D, completion: ((Bool) -> Void)? = nil) {
         switch self.animation {
         case .none:
-            view.layer.sublayerTransform = transform
+            layer.sublayerTransform = transform
             completion?(true)
         case let .curve(duration, curve):
             let previousValue: CATransform3D
-            if let presentation = view.layer.presentation() {
+            if let presentation = layer.presentation() {
                 previousValue = presentation.sublayerTransform
             } else {
-                previousValue = view.layer.sublayerTransform
+                previousValue = layer.sublayerTransform
             }
-            view.layer.sublayerTransform = transform
-            view.layer.animate(
+            layer.sublayerTransform = transform
+            layer.animate(
                 from: NSValue(caTransform3D: previousValue),
                 to: NSValue(caTransform3D: transform),
                 keyPath: "sublayerTransform",
@@ -502,7 +472,7 @@ public struct Transition {
         }
     }
 
-    public func animateScale(view: UIView, from fromValue: CGFloat, to toValue: CGFloat, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
+    public func animateScale(view: UIView, from fromValue: CGFloat, to toValue: CGFloat, delay: Double = 0.0, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
         switch self.animation {
         case .none:
             completion?(true)
@@ -512,7 +482,7 @@ public struct Transition {
                 to: toValue as NSNumber,
                 keyPath: "transform.scale",
                 duration: duration,
-                delay: 0.0,
+                delay: delay,
                 curve: curve,
                 removeOnCompletion: true,
                 additive: additive,
@@ -540,11 +510,11 @@ public struct Transition {
         }
     }
 
-    public func animateAlpha(view: UIView, from fromValue: CGFloat, to toValue: CGFloat, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
-        self.animateAlpha(layer: view.layer, from: fromValue, to: toValue, additive: additive, completion: completion)
+    public func animateAlpha(view: UIView, from fromValue: CGFloat, to toValue: CGFloat, delay: Double = 0.0, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
+        self.animateAlpha(layer: view.layer, from: fromValue, to: toValue, delay: delay, additive: additive, completion: completion)
     }
     
-    public func animateAlpha(layer: CALayer, from fromValue: CGFloat, to toValue: CGFloat, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
+    public func animateAlpha(layer: CALayer, from fromValue: CGFloat, to toValue: CGFloat, delay: Double = 0.0, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
         switch self.animation {
         case .none:
             completion?(true)
@@ -554,7 +524,7 @@ public struct Transition {
                 to: toValue as NSNumber,
                 keyPath: "opacity",
                 duration: duration,
-                delay: 0.0,
+                delay: delay,
                 curve: curve,
                 removeOnCompletion: true,
                 additive: additive,
@@ -601,7 +571,7 @@ public struct Transition {
     public func animateBounds(layer: CALayer, from fromValue: CGRect, to toValue: CGRect, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
         switch self.animation {
         case .none:
-            break
+            completion?(true)
         case let .curve(duration, curve):
             layer.animate(
                 from: NSValue(cgRect: fromValue),
@@ -620,7 +590,7 @@ public struct Transition {
     public func animateBoundsOrigin(layer: CALayer, from fromValue: CGPoint, to toValue: CGPoint, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
         switch self.animation {
         case .none:
-            break
+            completion?(true)
         case let .curve(duration, curve):
             layer.animate(
                 from: NSValue(cgPoint: fromValue),
@@ -639,7 +609,7 @@ public struct Transition {
     public func animateBoundsSize(layer: CALayer, from fromValue: CGSize, to toValue: CGSize, additive: Bool = false, completion: ((Bool) -> Void)? = nil) {
         switch self.animation {
         case .none:
-            break
+            completion?(true)
         case let .curve(duration, curve):
             layer.animate(
                 from: NSValue(cgSize: fromValue),
@@ -657,6 +627,7 @@ public struct Transition {
     
     public func setCornerRadius(layer: CALayer, cornerRadius: CGFloat, completion: ((Bool) -> Void)? = nil) {
         if layer.cornerRadius == cornerRadius {
+            completion?(true)
             return
         }
         switch self.animation {
@@ -689,8 +660,9 @@ public struct Transition {
         switch self.animation {
         case .none:
             layer.path = path
+            completion?(true)
         case let .curve(duration, curve):
-            if let previousPath = layer.path {
+            if let previousPath = layer.path, previousPath != path {
                 layer.animate(
                     from: previousPath,
                     to: path,
@@ -705,7 +677,31 @@ public struct Transition {
                 layer.path = path
             } else {
                 layer.path = path
+                completion?(true)
             }
+        }
+    }
+    
+    public func setShapeLayerLineWidth(layer: CAShapeLayer, lineWidth: CGFloat, completion: ((Bool) -> Void)? = nil) {
+        switch self.animation {
+        case .none:
+            layer.lineWidth = lineWidth
+            completion?(true)
+        case let .curve(duration, curve):
+            let previousLineWidth = layer.lineWidth
+            layer.lineWidth = lineWidth
+            
+            layer.animate(
+                from: previousLineWidth as NSNumber,
+                to: lineWidth as NSNumber,
+                keyPath: "lineWidth",
+                duration: duration,
+                delay: 0.0,
+                curve: curve,
+                removeOnCompletion: true,
+                additive: false,
+                completion: completion
+            )
         }
     }
     
@@ -713,6 +709,7 @@ public struct Transition {
         switch self.animation {
         case .none:
             layer.lineDashPattern = pattern
+            completion?(true)
         case let .curve(duration, curve):
             if let previousLineDashPattern = layer.lineDashPattern {
                 layer.lineDashPattern = pattern
@@ -730,7 +727,96 @@ public struct Transition {
                 )
             } else {
                 layer.lineDashPattern = pattern
+                completion?(true)
             }
+        }
+    }
+    
+    public func setBackgroundColor(view: UIView, color: UIColor, completion: ((Bool) -> Void)? = nil) {
+        self.setBackgroundColor(layer: view.layer, color: color, completion: completion)
+    }
+    
+    public func setBackgroundColor(layer: CALayer, color: UIColor, completion: ((Bool) -> Void)? = nil) {
+        if let current = layer.backgroundColor, current == color.cgColor {
+            completion?(true)
+            return
+        }
+        
+        switch self.animation {
+        case .none:
+            layer.backgroundColor = color.cgColor
+            completion?(true)
+        case let .curve(duration, curve):
+            let previousColor: CGColor = layer.backgroundColor ?? UIColor.clear.cgColor
+            layer.backgroundColor = color.cgColor
+            
+            layer.animate(
+                from: previousColor,
+                to: color.cgColor,
+                keyPath: "backgroundColor",
+                duration: duration,
+                delay: 0.0,
+                curve: curve,
+                removeOnCompletion: true,
+                additive: false,
+                completion: completion
+            )
+        }
+    }
+    
+    public func setTintColor(view: UIView, color: UIColor, completion: ((Bool) -> Void)? = nil) {
+        if let current = view.tintColor, current == color {
+            completion?(true)
+            return
+        }
+        
+        switch self.animation {
+        case .none:
+            view.tintColor = color
+            completion?(true)
+        case let .curve(duration, curve):
+            let previousColor: UIColor = view.tintColor ?? UIColor.clear
+            view.tintColor = color
+            
+            view.layer.animate(
+                from: previousColor,
+                to: color.cgColor,
+                keyPath: "contentsMultiplyColor",
+                duration: duration,
+                delay: 0.0,
+                curve: curve,
+                removeOnCompletion: true,
+                additive: false,
+                completion: completion
+            )
+        }
+    }
+    
+    public func setTintColor(layer: CALayer, color: UIColor, completion: ((Bool) -> Void)? = nil) {
+        if let current = layer.layerTintColor, current == color.cgColor {
+            completion?(true)
+            return
+        }
+        
+        switch self.animation {
+        case .none:
+            layer.layerTintColor = color.cgColor
+            completion?(true)
+        case let .curve(duration, curve):
+            let previousColor: CGColor = layer.layerTintColor ?? UIColor.clear.cgColor
+            layer.layerTintColor = color.cgColor
+            
+            layer.animate(
+                from: previousColor,
+                to: color.cgColor,
+                keyPath: "contentsMultiplyColor",
+                duration: duration,
+                delay: 0.0,
+                curve: curve,
+                removeOnCompletion: true,
+                additive: false,
+                completion: completion
+            )
         }
     }
 }

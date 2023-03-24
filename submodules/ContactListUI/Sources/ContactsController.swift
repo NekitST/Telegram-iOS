@@ -82,6 +82,8 @@ private final class SortHeaderButton: HighlightableButtonNode {
         
         self.containerNode.frame = CGRect(origin: CGPoint(), size: CGSize(width: size.width, height: 44.0))
         self.referenceNode.frame = self.containerNode.bounds
+        
+        self.accessibilityLabel = strings.Contacts_Sort
     }
     
     override func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
@@ -105,7 +107,7 @@ private func fixListNodeScrolling(_ listNode: ListView, searchNode: NavigationBa
         } else {
             offset = 0.0
         }
-        let _ = listNode.scrollToOffsetFromTop(offset)
+        let _ = listNode.scrollToOffsetFromTop(offset, animated: true)
         return true
     } else if searchNode.expansionProgress == 1.0 {
         var sortItemNode: ListViewItemNode?
@@ -201,6 +203,7 @@ public class ContactsController: ViewController {
         self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
         
         self.navigationItem.leftBarButtonItem = UIBarButtonItem(customDisplayNode: self.sortButton)
+        self.navigationItem.leftBarButtonItem?.accessibilityLabel = self.presentationData.strings.Contacts_Sort
         self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: PresentationResourcesRootController.navigationAddIcon(self.presentationData.theme), style: .plain, target: self, action: #selector(self.addPressed))
         self.navigationItem.rightBarButtonItem?.accessibilityLabel = self.presentationData.strings.Contacts_VoiceOver_AddContact
         
@@ -262,6 +265,7 @@ public class ContactsController: ViewController {
         }
         
         self.searchContentNode = NavigationBarSearchContentNode(theme: self.presentationData.theme, placeholder: self.presentationData.strings.Common_Search, activate: { [weak self] in
+            self?.contactsNode.contactListNode.listNode.cancelTracking()
             self?.activateSearch()
         })
         self.navigationBar?.setContentNode(self.searchContentNode, animated: false)
@@ -323,7 +327,7 @@ public class ContactsController: ViewController {
                                 scrollToEndIfExists = true
                             }
                             
-                            strongSelf.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: strongSelf.context, chatLocation: .peer(id: peer.id), purposefulAction: { [weak self] in
+                            strongSelf.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: strongSelf.context, chatLocation: .peer(EnginePeer(peer)), purposefulAction: { [weak self] in
                                 if fromSearch {
                                     self?.deactivateSearch(animated: false)
                                     self?.switchToChatsController?()
@@ -487,7 +491,7 @@ public class ContactsController: ViewController {
                             let _ = (strongSelf.context.account.postbox.loadedPeerWithId(strongSelf.context.account.peerId)
                             |> deliverOnMainQueue).start(next: { [weak self, weak controller] peer in
                                 if let strongSelf = self, let controller = controller {
-                                    controller.present(strongSelf.context.sharedContext.makeChatQrCodeScreen(context: strongSelf.context, peer: peer), in: .window(.root))
+                                    controller.present(strongSelf.context.sharedContext.makeChatQrCodeScreen(context: strongSelf.context, peer: peer, threadId: nil), in: .window(.root))
                                 }
                             })
                         }
@@ -686,7 +690,7 @@ private final class ContactsTabBarContextExtractedContentSource: ContextExtracte
     let keepInPlace: Bool = true
     let ignoreContentTouches: Bool = true
     let blurBackground: Bool = true
-    let centerActionsHorizontally: Bool = true
+    let actionsHorizontalAlignment: ContextActionsHorizontalAlignment = .center
     
     private let controller: ViewController
     private let sourceNode: ContextExtractedContentContainingNode

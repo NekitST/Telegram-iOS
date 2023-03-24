@@ -12,6 +12,8 @@ import AudioBlob
 import ChatPresentationInterfaceState
 import ComponentFlow
 import LottieAnimationComponent
+import LottieComponent
+import AccountContext
 
 private let offsetThreshold: CGFloat = 10.0
 private let dismissOffsetThreshold: CGFloat = 70.0
@@ -97,15 +99,15 @@ private final class ChatTextInputMediaRecordingButtonPresenterControllerNode: Vi
 }
 
 private final class ChatTextInputMediaRecordingButtonPresenter : NSObject, TGModernConversationInputMicButtonPresentation {
-    private let account: Account?
+    private let statusBarHost: StatusBarHost?
     private let presentController: (ViewController) -> Void
     let container: ChatTextInputMediaRecordingButtonPresenterContainer
     private var presentationController: ChatTextInputMediaRecordingButtonPresenterController?
     private var timer: SwiftSignalKit.Timer?
     fileprivate weak var button: ChatTextInputMediaRecordingButton?
     
-    init(account: Account, presentController: @escaping (ViewController) -> Void) {
-        self.account = account
+    init(statusBarHost: StatusBarHost?, presentController: @escaping (ViewController) -> Void) {
+        self.statusBarHost = statusBarHost
         self.presentController = presentController
         self.container = ChatTextInputMediaRecordingButtonPresenterContainer()
     }
@@ -128,11 +130,15 @@ private final class ChatTextInputMediaRecordingButtonPresenter : NSObject, TGMod
     }
     
     func present() {
-        if let keyboardWindow = LegacyComponentsGlobals.provider().applicationKeyboardWindow(), !keyboardWindow.isHidden {
+        let windowIsVisible: (UIWindow) -> Bool = { window in
+            return !window.frame.height.isZero
+        }
+        
+        if let statusBarHost = self.statusBarHost, let keyboardWindow = statusBarHost.keyboardWindow, let keyboardView = statusBarHost.keyboardView, !keyboardView.frame.height.isZero, isViewVisibleInHierarchy(keyboardView) {
             keyboardWindow.addSubview(self.container)
             
             self.timer = SwiftSignalKit.Timer(timeout: 0.05, repeat: true, completion: { [weak self] in
-                if let keyboardWindow = LegacyComponentsGlobals.provider().applicationKeyboardWindow(), !keyboardWindow.isHidden {
+                if let keyboardWindow = LegacyComponentsGlobals.provider().applicationKeyboardWindow(), windowIsVisible(keyboardWindow) {
                 } else {
                     self?.present()
                 }
@@ -170,11 +176,12 @@ private final class ChatTextInputMediaRecordingButtonPresenter : NSObject, TGMod
 }
 
 final class ChatTextInputMediaRecordingButton: TGModernConversationInputMicButton, TGModernConversationInputMicButtonDelegate {
+    private let context: AccountContext
     private var theme: PresentationTheme
     private let strings: PresentationStrings
     
     var mode: ChatTextInputMediaRecordingButtonMode = .audio
-    var account: Account?
+    var statusBarHost: StatusBarHost?
     let presentController: (ViewController) -> Void
     var recordingDisabled: () -> Void = { }
     var beginRecording: () -> Void = { }
@@ -281,13 +288,20 @@ final class ChatTextInputMediaRecordingButton: TGModernConversationInputMicButto
         }
     }
     
-    private lazy var micLock: (UIView & TGModernConversationInputMicButtonLock) = {
-        let lockView = LockView(frame: CGRect(origin: CGPoint(), size: CGSize(width: 40.0, height: 60.0)), theme: self.theme, strings: self.strings)
-        lockView.addTarget(self, action: #selector(handleStopTap), for: .touchUpInside)
-        return lockView
-    }()
+    private var micLockValue: (UIView & TGModernConversationInputMicButtonLock)?
+    private var micLock: UIView & TGModernConversationInputMicButtonLock {
+        if let current = self.micLockValue {
+            return current
+        } else {
+            let lockView = LockView(frame: CGRect(origin: CGPoint(), size: CGSize(width: 40.0, height: 60.0)), theme: self.theme, strings: self.strings)
+            lockView.addTarget(self, action: #selector(handleStopTap), for: .touchUpInside)
+            self.micLockValue = lockView
+            return lockView
+        }
+    }
     
-    init(theme: PresentationTheme, strings: PresentationStrings, presentController: @escaping (ViewController) -> Void) {
+    init(context: AccountContext, theme: PresentationTheme, strings: PresentationStrings, presentController: @escaping (ViewController) -> Void) {
+        self.context = context
         self.theme = theme
         self.strings = strings
         self.animationView = ComponentView<Empty>()
@@ -354,38 +368,27 @@ final class ChatTextInputMediaRecordingButton: TGModernConversationInputMicButto
             case .video:
                 animationName = "anim_micToVideo"
         }
-        
-        var animationMode: LottieAnimationComponent.AnimationItem.Mode = .still(position: .end)
-        if previousMode != mode {
-            animationMode = .animating(loop: false)
-        }
-    
-        let colorKeys = ["__allcolors__"]
-        var colors: [String: UIColor] = [:]
-        for colorKey in colorKeys {
-            colors[colorKey] = self.theme.chat.inputPanel.panelControlColor.blitOver(self.theme.chat.inputPanel.inputBackgroundColor, alpha: 1.0)
-        }
-        
+
         let _ = animationView.update(
             transition: .immediate,
-            component: AnyComponent(LottieAnimationComponent(
-                animation: LottieAnimationComponent.AnimationItem(
-                    name: animationName,
-                    mode: animationMode
-                ),
-                colors: colors,
-                size: animationFrame.size
+            component: AnyComponent(LottieComponent(
+                content: LottieComponent.AppBundleContent(name: animationName),
+                color: self.theme.chat.inputPanel.panelControlColor.blitOver(self.theme.chat.inputPanel.inputBackgroundColor, alpha: 1.0)
             )),
             environment: {},
             containerSize: animationFrame.size
         )
 
-        if let view = animationView.view {
+        if let view = animationView.view as? LottieComponent.View {
             view.isUserInteractionEnabled = false
             if view.superview == nil {
                 self.insertSubview(view, at: 0)
             }
             view.frame = animationFrame
+            
+            if previousMode != mode {
+                view.playOnce()
+            }
         }
     }
     
@@ -396,7 +399,7 @@ final class ChatTextInputMediaRecordingButton: TGModernConversationInputMicButto
         
         self.pallete = legacyInputMicPalette(from: theme)
         self.micDecorationValue?.setColor(self.theme.chat.inputPanel.actionControlFillColor)
-        (self.micLock as? LockView)?.updateTheme(theme)
+        (self.micLockValue as? LockView)?.updateTheme(theme)
     }
     
     deinit {
@@ -473,7 +476,7 @@ final class ChatTextInputMediaRecordingButton: TGModernConversationInputMicButto
     }
     
     func micButtonPresenter() -> TGModernConversationInputMicButtonPresentation! {
-        let presenter = ChatTextInputMediaRecordingButtonPresenter(account: self.account!, presentController: self.presentController)
+        let presenter = ChatTextInputMediaRecordingButtonPresenter(statusBarHost: self.statusBarHost, presentController: self.presentController)
         presenter.button = self
         self.currentPresenter = presenter.view()
         return presenter
@@ -493,9 +496,11 @@ final class ChatTextInputMediaRecordingButton: TGModernConversationInputMicButto
     
     override func animateIn() {
         super.animateIn()
-
-        micDecoration.isHidden = false
-        micDecoration.startAnimating()
+        
+        if self.context.sharedContext.energyUsageSettings.fullTranslucency {
+            micDecoration.isHidden = false
+            micDecoration.startAnimating()
+        }
 
         let transition = ContainedViewLayoutTransition.animated(duration: 0.15, curve: .easeInOut)
         if let layer = self.animationView.view?.layer {

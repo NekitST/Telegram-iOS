@@ -10,51 +10,6 @@ import TelegramPresentationData
 import AccountContext
 import AttachmentUI
 
-public func requestContextResults(context: AccountContext, botId: EnginePeer.Id, query: String, peerId: EnginePeer.Id, offset: String = "", existingResults: ChatContextResultCollection? = nil, incompleteResults: Bool = false, staleCachedResults: Bool = false, limit: Int = 60) -> Signal<RequestChatContextResultsResult?, NoError> {
-    return context.engine.messages.requestChatContextResults(botId: botId, peerId: peerId, query: query, offset: offset, incompleteResults: incompleteResults, staleCachedResults: staleCachedResults)
-    |> `catch` { error -> Signal<RequestChatContextResultsResult?, NoError> in
-        return .single(nil)
-    }
-    |> mapToSignal { resultsStruct -> Signal<RequestChatContextResultsResult?, NoError> in
-        let results = resultsStruct?.results
-        
-        var collection = existingResults
-        var updated: Bool = false
-        if let existingResults = existingResults, let results = results {
-            var newResults: [ChatContextResult] = []
-            var existingIds = Set<String>()
-            for result in existingResults.results {
-                newResults.append(result)
-                existingIds.insert(result.id)
-            }
-            for result in results.results {
-                if !existingIds.contains(result.id) {
-                    newResults.append(result)
-                    existingIds.insert(result.id)
-                    updated = true
-                }
-            }
-            collection = ChatContextResultCollection(botId: existingResults.botId, peerId: existingResults.peerId, query: existingResults.query, geoPoint: existingResults.geoPoint, queryId: results.queryId, nextOffset: results.nextOffset, presentation: existingResults.presentation, switchPeer: existingResults.switchPeer, results: newResults, cacheTimeout: existingResults.cacheTimeout)
-        } else {
-            collection = results
-            updated = true
-        }
-        if let collection = collection, collection.results.count < limit, let nextOffset = collection.nextOffset, updated {
-            let nextResults = requestContextResults(context: context, botId: botId, query: query, peerId: peerId, offset: nextOffset, existingResults: collection, limit: limit)
-            if collection.results.count > 10 {
-                return .single(RequestChatContextResultsResult(results: collection, isStale: resultsStruct?.isStale ?? false))
-                |> then(nextResults)
-            } else {
-                return nextResults
-            }
-        } else if let collection = collection {
-            return .single(RequestChatContextResultsResult(results: collection, isStale: resultsStruct?.isStale ?? false))
-        } else {
-            return .single(nil)
-        }
-    }
-}
-
 public enum WebSearchMode {
     case media
     case avatar
@@ -78,7 +33,7 @@ final class WebSearchControllerInteraction {
     let openResult: (ChatContextResult) -> Void
     let setSearchQuery: (String) -> Void
     let deleteRecentQuery: (String) -> Void
-    let toggleSelection: (ChatContextResult, Bool) -> Void
+    let toggleSelection: (ChatContextResult, Bool) -> Bool
     let sendSelected: (ChatContextResult?, Bool, Int32?) -> Void
     let schedule: () -> Void
     let avatarCompleted: (UIImage) -> Void
@@ -86,7 +41,7 @@ final class WebSearchControllerInteraction {
     let editingState: TGMediaEditingContext
     var hiddenMediaId: String?
     
-    init(openResult: @escaping (ChatContextResult) -> Void, setSearchQuery: @escaping (String) -> Void, deleteRecentQuery: @escaping (String) -> Void, toggleSelection: @escaping (ChatContextResult, Bool) -> Void, sendSelected: @escaping (ChatContextResult?, Bool, Int32?) -> Void, schedule: @escaping () -> Void, avatarCompleted: @escaping (UIImage) -> Void, selectionState: TGMediaSelectionContext?, editingState: TGMediaEditingContext) {
+    init(openResult: @escaping (ChatContextResult) -> Void, setSearchQuery: @escaping (String) -> Void, deleteRecentQuery: @escaping (String) -> Void, toggleSelection: @escaping (ChatContextResult, Bool) -> Bool, sendSelected: @escaping (ChatContextResult?, Bool, Int32?) -> Void, schedule: @escaping () -> Void, avatarCompleted: @escaping (UIImage) -> Void, selectionState: TGMediaSelectionContext?, editingState: TGMediaEditingContext) {
         self.openResult = openResult
         self.setSearchQuery = setSearchQuery
         self.deleteRecentQuery = deleteRecentQuery
@@ -130,6 +85,7 @@ public final class WebSearchController: ViewController {
     private let peer: EnginePeer?
     private let chatLocation: ChatLocation?
     private let configuration: EngineConfiguration.SearchBots
+    private let activateOnDisplay: Bool
     
     private var controllerNode: WebSearchControllerNode {
         return self.displayNode as! WebSearchControllerNode
@@ -152,12 +108,6 @@ public final class WebSearchController: ViewController {
     
     private var navigationContentNode: WebSearchNavigationContentNode?
     
-    public var presentStickers: ((@escaping (TelegramMediaFile, Bool, UIView, CGRect) -> Void) -> TGPhotoPaintStickersScreen?)? {
-        didSet {
-            self.controllerNode.presentStickers = self.presentStickers
-        }
-    }
-    
     public var getCaptionPanelView: () -> TGCaptionPanelView? = { return nil } {
         didSet {
             self.controllerNode.getCaptionPanelView = self.getCaptionPanelView
@@ -170,12 +120,15 @@ public final class WebSearchController: ViewController {
     
     public var searchingUpdated: (Bool) -> Void = { _ in }
     
-    public init(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, peer: EnginePeer?, chatLocation: ChatLocation?, configuration: EngineConfiguration.SearchBots, mode: WebSearchControllerMode) {
+    public var attemptItemSelection: (ChatContextResult) -> Bool = { _ in return true }
+    
+    public init(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, peer: EnginePeer?, chatLocation: ChatLocation?, configuration: EngineConfiguration.SearchBots, mode: WebSearchControllerMode, activateOnDisplay: Bool = true) {
         self.context = context
         self.mode = mode
         self.peer = peer
         self.chatLocation = chatLocation
         self.configuration = configuration
+        self.activateOnDisplay = activateOnDisplay
         
         let presentationData = updatedPresentationData?.initial ?? context.sharedContext.currentPresentationData.with { $0 }
         self.interfaceState = WebSearchInterfaceState(presentationData: presentationData)
@@ -284,8 +237,14 @@ public final class WebSearchController: ViewController {
             }
         }, toggleSelection: { [weak self] result, value in
             if let strongSelf = self {
+                if !strongSelf.attemptItemSelection(result) {
+                    return false
+                }
                 let item = LegacyWebSearchItem(result: result)
                 strongSelf.controllerInteraction?.selectionState?.setItem(item, selected: value)
+                return true
+            } else {
+                return false
             }
         }, sendSelected: { [weak self] current, silently, scheduleTime in
             if let selectionState = selectionState, let results = self?.controllerNode.currentExternalResults {
@@ -308,6 +267,18 @@ public final class WebSearchController: ViewController {
                 avatarCompleted(result)
             }
         }, selectionState: selectionState, editingState: editingState)
+        
+        selectionState?.attemptSelectingItem = { [weak self] item in
+            guard let self else {
+                return false
+            }
+            
+            if let item = item as? LegacyWebSearchItem {
+                return self.attemptItemSelection(item.result)
+            }
+            
+            return true
+        }
         
         if let selectionState = selectionState {
             self.selectionDisposable = (selectionChangedSignal(selectionState: selectionState)
@@ -360,7 +331,7 @@ public final class WebSearchController: ViewController {
             self.didPlayPresentationAnimation = true
             self.controllerNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
         }
-        if !self.didActivateSearch {
+        if !self.didActivateSearch && self.activateOnDisplay {
             self.didActivateSearch = true
             self.navigationContentNode?.activate(select: select)
         }
@@ -413,11 +384,7 @@ public final class WebSearchController: ViewController {
         }
     }
     
-    private func updateSearchQuery(_ query: String) {
-        if !query.isEmpty {
-            let _ = addRecentWebSearchQuery(engine: self.context.engine, string: query).start()
-        }
-        
+    private func updateSearchQuery(_ query: String) {        
         let scope: Signal<WebSearchScope?, NoError>
         switch self.mode {
             case .media:
@@ -501,7 +468,7 @@ public final class WebSearchController: ViewController {
         }
         |> mapToSignal { peer -> Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError> in
             if case let .user(user) = peer, let botInfo = user.botInfo, let _ = botInfo.inlinePlaceholder {
-                let results = requestContextResults(context: context, botId: user.id, query: query, peerId: peerId, limit: 64)
+                let results = requestContextResults(engine: context.engine, botId: user.id, query: query, peerId: peerId, limit: 64)
                 |> map { results -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
                     return { _ in
                         return .contextRequestResult(.user(user), results?.results)
@@ -609,8 +576,8 @@ public class WebSearchPickerContext: AttachmentMediaPickerContext {
         self.interaction?.editingState.setForcedCaption(caption, skipUpdate: true)
     }
     
-    public func send(silently: Bool, mode: AttachmentMediaPickerSendMode) {
-        self.interaction?.sendSelected(nil, silently, nil)
+    public func send(mode: AttachmentMediaPickerSendMode, attachmentMode: AttachmentMediaPickerAttachmentMode) {
+        self.interaction?.sendSelected(nil, mode == .silently, nil)
     }
     
     public func schedule() {

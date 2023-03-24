@@ -12,13 +12,22 @@ public enum CreateChannelError {
     case serverProvided(String)
 }
 
-private func createChannel(account: Account, title: String, description: String?, isSupergroup:Bool, location: (latitude: Double, longitude: Double, address: String)? = nil, isForHistoryImport: Bool = false) -> Signal<PeerId, CreateChannelError> {
+public enum CreateChannelMode {
+    case channel
+    case supergroup(isForum: Bool)
+}
+
+private func createChannel(account: Account, title: String, description: String?, username: String?, mode: CreateChannelMode, location: (latitude: Double, longitude: Double, address: String)? = nil, isForHistoryImport: Bool = false) -> Signal<PeerId, CreateChannelError> {
     return account.postbox.transaction { transaction -> Signal<PeerId, CreateChannelError> in
         var flags: Int32 = 0
-        if isSupergroup {
-            flags |= (1 << 1)
-        } else {
+        switch mode {
+        case .channel:
             flags |= (1 << 0)
+        case let .supergroup(isForum):
+            flags |= (1 << 1)
+            if isForum {
+                flags |= (1 << 5)
+            }
         }
         if isForHistoryImport {
             flags |= (1 << 3)
@@ -34,7 +43,7 @@ private func createChannel(account: Account, title: String, description: String?
         
         transaction.clearItemCacheCollection(collectionId: Namespaces.CachedItemCollection.cachedGroupCallDisplayAsPeers)
         
-        return account.network.request(Api.functions.channels.createChannel(flags: flags, title: title, about: description ?? "", geoPoint: geoPoint, address: address), automaticFloodWait: false)
+        return account.network.request(Api.functions.channels.createChannel(flags: flags, title: title, about: description ?? "", geoPoint: geoPoint, address: address, ttlPeriod: nil), automaticFloodWait: false)
         |> mapError { error -> CreateChannelError in
             if error.errorCode == 406 {
                 return .serverProvided(error.errorDescription)
@@ -61,6 +70,17 @@ private func createChannel(account: Account, title: String, description: String?
                 }
                 |> castError(CreateChannelError.self)
                 |> timeout(5.0, queue: Queue.concurrentDefaultQueue(), alternate: .fail(.generic))
+                |> mapToSignal { peerId -> Signal<PeerId, CreateChannelError> in
+                    if title.contains("*forum") {
+                        return _internal_setChannelForumMode(account: account, peerId: peerId, isForum: true)
+                        |> castError(CreateChannelError.self)
+                        |> map { _ -> PeerId in
+                        }
+                        |> then(.single(peerId))
+                    } else {
+                        return .single(peerId)
+                    }
+                }
             } else {
                 return .fail(.generic)
             }
@@ -70,12 +90,12 @@ private func createChannel(account: Account, title: String, description: String?
     |> switchToLatest
 }
 
-func _internal_createChannel(account: Account, title: String, description: String?) -> Signal<PeerId, CreateChannelError> {
-    return createChannel(account: account, title: title, description: description, isSupergroup: false)
+func _internal_createChannel(account: Account, title: String, description: String?, username: String?) -> Signal<PeerId, CreateChannelError> {
+    return createChannel(account: account, title: title, description: description, username: nil, mode: .channel)
 }
 
-func _internal_createSupergroup(account: Account, title: String, description: String?, location: (latitude: Double, longitude: Double, address: String)? = nil, isForHistoryImport: Bool = false) -> Signal<PeerId, CreateChannelError> {
-    return createChannel(account: account, title: title, description: description, isSupergroup: true, location: location, isForHistoryImport: isForHistoryImport)
+func _internal_createSupergroup(account: Account, title: String, description: String?, username: String?, isForum: Bool, location: (latitude: Double, longitude: Double, address: String)? = nil, isForHistoryImport: Bool = false) -> Signal<PeerId, CreateChannelError> {
+    return createChannel(account: account, title: title, description: description, username: username, mode: .supergroup(isForum: isForum), location: location, isForHistoryImport: isForHistoryImport)
 }
 
 public enum DeleteChannelError {

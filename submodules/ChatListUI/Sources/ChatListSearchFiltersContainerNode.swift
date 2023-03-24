@@ -81,6 +81,9 @@ private final class ItemNode: ASDisplayNode {
             case .chats:
                 title = presentationData.strings.ChatList_Search_FilterChats
                 icon = nil
+            case .topics:
+                title = presentationData.strings.ChatList_Search_FilterChats
+                icon = nil
             case .media:
                 title = presentationData.strings.ChatList_Search_FilterMedia
                 icon = nil
@@ -122,6 +125,13 @@ private final class ItemNode: ASDisplayNode {
         let deselectionAlpha: CGFloat = 1.0// - selectionFraction
         transition.updateAlpha(node: self.titleNode, alpha: deselectionAlpha)
         transition.updateAlpha(node: self.titleActiveNode, alpha: selectionAlpha)
+        
+        self.buttonNode.accessibilityLabel = title
+        if selectionFraction == 1.0 {
+            self.buttonNode.accessibilityTraits = [.button, .selected]
+        } else {
+            self.buttonNode.accessibilityTraits = [.button]
+        }
         
         if self.theme !== presentationData.theme {
             self.theme = presentationData.theme

@@ -143,6 +143,7 @@ public final class ReactionIconView: PortalSourceView {
         
         let animationLayer = InlineStickerItemLayer(
             context: context,
+            userLocation: .other,
             attemptSynchronousLoad: false,
             emoji: ChatTextInputTextCustomEmojiAttribute(
                 interactivelySelectedFromPackId: nil,
@@ -169,7 +170,7 @@ public final class ReactionIconView: PortalSourceView {
         
         animationLayer.frame = CGRect(origin: CGPoint(x: floor((size.width - iconSize.width) / 2.0), y: floor((size.height - iconSize.height) / 2.0)), size: iconSize)
         
-        animationLayer.isVisibleForAnimations = animateIdle
+        animationLayer.isVisibleForAnimations = animateIdle && context.sharedContext.energyUsageSettings.loopEmoji
     }
     
     func reset() {

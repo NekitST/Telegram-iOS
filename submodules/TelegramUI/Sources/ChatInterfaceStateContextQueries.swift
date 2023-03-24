@@ -127,7 +127,10 @@ private func updatedContextQueryResultStateForQuery(context: AccountContext, pee
                     case .installed:
                         scope = [.installed]
                 }
-                return context.engine.stickers.searchStickers(query: query.basicEmoji.0, scope: scope)
+                return context.engine.stickers.searchStickers(query: [query.basicEmoji.0], scope: scope)
+                |> map { items -> [FoundStickerItem] in
+                    return items.items
+                }
                 |> castError(ChatContextQueryError.self)
             }
             |> map { stickers -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
@@ -351,7 +354,7 @@ private func updatedContextQueryResultStateForQuery(context: AccountContext, pee
                         }
                         for attribute in item.file.attributes {
                             switch attribute {
-                            case let .CustomEmoji(_, alt, _):
+                            case let .CustomEmoji(_, _, alt, _):
                                 if alt == query {
                                     if !item.file.isPremiumEmoji || hasPremium {
                                         result.append((alt, item.file, alt))
@@ -415,7 +418,7 @@ private func updatedContextQueryResultStateForQuery(context: AccountContext, pee
                             }
                             for attribute in item.file.attributes {
                                 switch attribute {
-                                case let .CustomEmoji(_, alt, _):
+                                case let .CustomEmoji(_, _, alt, _):
                                     if !alt.isEmpty, let keyword = allEmoticons[alt] {
                                         if !item.file.isPremiumEmoji || hasPremium {
                                             result.append((alt, item.file, keyword))
@@ -470,15 +473,30 @@ func searchQuerySuggestionResultStateForChatInterfacePresentationState(_ chatPre
                                 signal = .single({ _ in return nil })
                             }
                         }
-                        
-                        let participants = searchPeerMembers(context: context, peerId: peer.id, chatLocation: chatPresentationInterfaceState.chatLocation, query: query, scope: .memberSuggestion)
-                        |> map { peers -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
+                    
+                        let participants = combineLatest(
+                            context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: context.account.peerId)),
+                            searchPeerMembers(context: context, peerId: peer.id, chatLocation: chatPresentationInterfaceState.chatLocation, query: query, scope: .memberSuggestion)
+                        )
+                        |> map { accountPeer, peers -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
                             let filteredPeers = peers
                             var sortedPeers: [EnginePeer] = []
                             sortedPeers.append(contentsOf: filteredPeers.sorted(by: { lhs, rhs in
                                 let result = lhs.indexName.stringRepresentation(lastNameFirst: true).compare(rhs.indexName.stringRepresentation(lastNameFirst: true))
                                 return result == .orderedAscending
                             }))
+                            if let accountPeer {
+                                var hasOwnPeer = false
+                                for peer in sortedPeers {
+                                    if peer.id == accountPeer.id {
+                                        hasOwnPeer = true
+                                        break
+                                    }
+                                }
+                                if !hasOwnPeer {
+                                    sortedPeers.append(accountPeer)
+                                }
+                            }
                             return { _ in return .mentions(sortedPeers) }
                         }
                         

@@ -21,6 +21,7 @@ import FetchManagerImpl
 import InAppPurchaseManager
 import AnimationCache
 import MultiAnimationRenderer
+import AppBundle
 
 private final class DeviceSpecificContactImportContext {
     let disposable = MetaDisposable()
@@ -147,12 +148,19 @@ public final class AccountContextImpl: AccountContext {
         return self._appConfiguration.get()
     }
     
+    public var currentCountriesConfiguration: Atomic<CountriesConfiguration>
+    private let _countriesConfiguration = Promise<CountriesConfiguration>()
+    public var countriesConfiguration: Signal<CountriesConfiguration, NoError> {
+        return self._countriesConfiguration.get()
+    }
+    
     public var watchManager: WatchManager?
     
     private var storedPassword: (String, CFAbsoluteTime, SwiftSignalKit.Timer)?
     private var limitsConfigurationDisposable: Disposable?
     private var contentSettingsDisposable: Disposable?
     private var appConfigurationDisposable: Disposable?
+    private var countriesConfigurationDisposable: Disposable?
     
     private let deviceSpecificContactImportContexts: QueueLocalObject<DeviceSpecificContactImportContexts>
     private var managedAppSpecificContactsDisposable: Disposable?
@@ -167,6 +175,72 @@ public final class AccountContextImpl: AccountContext {
     
     private var animatedEmojiStickersDisposable: Disposable?
     public private(set) var animatedEmojiStickers: [String: [StickerPackItem]] = [:]
+    private let animatedEmojiStickersValue = Promise<[String: [StickerPackItem]]>()
+    public var animatedEmojiStickersSignal: Signal<[String: [StickerPackItem]], NoError> {
+        return self.animatedEmojiStickersValue.get()
+    }
+    
+    private var additionalAnimatedEmojiStickersValue: Promise<[String: [Int: StickerPackItem]]>?
+    public var additionalAnimatedEmojiStickers: Signal<[String: [Int: StickerPackItem]], NoError> {
+        let additionalAnimatedEmojiStickersValue: Promise<[String: [Int: StickerPackItem]]>
+        if let current = self.additionalAnimatedEmojiStickersValue {
+            additionalAnimatedEmojiStickersValue = current
+        } else {
+            additionalAnimatedEmojiStickersValue = Promise<[String: [Int: StickerPackItem]]>()
+            self.additionalAnimatedEmojiStickersValue = additionalAnimatedEmojiStickersValue
+            additionalAnimatedEmojiStickersValue.set(self.engine.stickers.loadedStickerPack(reference: .animatedEmojiAnimations, forceActualized: false)
+            |> map { animatedEmoji -> [String: [Int: StickerPackItem]] in
+                let sequence = "0️⃣1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣8️⃣9️⃣".strippedEmoji
+                var animatedEmojiStickers: [String: [Int: StickerPackItem]] = [:]
+                switch animatedEmoji {
+                case let .result(_, items, _):
+                    for item in items {
+                        let indexKeys = item.getStringRepresentationsOfIndexKeys()
+                        if indexKeys.count > 1, let first = indexKeys.first, let last = indexKeys.last {
+                            let emoji: String?
+                            let indexEmoji: String?
+                            if sequence.contains(first.strippedEmoji) {
+                                emoji = last
+                                indexEmoji = first
+                            } else if sequence.contains(last.strippedEmoji) {
+                                emoji = first
+                                indexEmoji = last
+                            } else {
+                                emoji = nil
+                                indexEmoji = nil
+                            }
+                            
+                            if let emoji = emoji?.strippedEmoji, let indexEmoji = indexEmoji?.strippedEmoji.first, let strIndex = sequence.firstIndex(of: indexEmoji) {
+                                let index = sequence.distance(from: sequence.startIndex, to: strIndex)
+                                if animatedEmojiStickers[emoji] != nil {
+                                    animatedEmojiStickers[emoji]![index] = item
+                                } else {
+                                    animatedEmojiStickers[emoji] = [index: item]
+                                }
+                            }
+                        }
+                    }
+                default:
+                    break
+                }
+                return animatedEmojiStickers
+            })
+        }
+        return additionalAnimatedEmojiStickersValue.get()
+    }
+    
+    private var availableReactionsValue: Promise<AvailableReactions?>?
+    public var availableReactions: Signal<AvailableReactions?, NoError> {
+        let availableReactionsValue: Promise<AvailableReactions?>
+        if let current = self.availableReactionsValue {
+            availableReactionsValue = current
+        } else {
+            availableReactionsValue = Promise<AvailableReactions?>()
+            self.availableReactionsValue = availableReactionsValue
+            availableReactionsValue.set(self.engine.stickers.availableReactions())
+        }
+        return availableReactionsValue.get()
+    }
     
     private var userLimitsConfigurationDisposable: Disposable?
     public private(set) var userLimits: EngineConfiguration.UserLimits
@@ -209,8 +283,13 @@ public final class AccountContextImpl: AccountContext {
         self.cachedGroupCallContexts = AccountGroupCallContextCacheImpl()
         self.meshAnimationCache = MeshAnimationCache(mediaBox: account.postbox.mediaBox)
         
+        let cacheStorageBox = self.account.postbox.mediaBox.cacheStorageBox
         self.animationCache = AnimationCacheImpl(basePath: self.account.postbox.mediaBox.basePath + "/animation-cache", allocateTempFile: {
             return TempBox.shared.tempFile(fileName: "file").path
+        }, updateStorageStats: { path, size in
+            if let pathData = path.data(using: .utf8) {
+                cacheStorageBox.update(id: pathData, size: size)
+            }
         })
         self.animationRenderer = MultiAnimationRendererImpl()
         
@@ -241,11 +320,18 @@ public final class AccountContextImpl: AccountContext {
         let updatedAppConfiguration = getAppConfiguration(postbox: account.postbox)
         self.currentAppConfiguration = Atomic(value: appConfiguration)
         self._appConfiguration.set(.single(appConfiguration) |> then(updatedAppConfiguration))
-        
+                
         let currentAppConfiguration = self.currentAppConfiguration
         self.appConfigurationDisposable = (self._appConfiguration.get()
         |> deliverOnMainQueue).start(next: { value in
             let _ = currentAppConfiguration.swap(value)
+        })
+        
+        self.currentCountriesConfiguration = Atomic(value: CountriesConfiguration(countries: loadCountryCodes()))
+        let currentCountriesConfiguration = self.currentCountriesConfiguration
+        self.countriesConfigurationDisposable = (self.engine.localization.getCountriesList(accountManager: sharedContext.accountManager, langCode: nil)
+        |> deliverOnMainQueue).start(next: { value in
+            let _ = currentCountriesConfiguration.swap(CountriesConfiguration(countries: value))
         })
         
         let queue = Queue()
@@ -291,6 +377,7 @@ public final class AccountContextImpl: AccountContext {
                 return
             }
             strongSelf.animatedEmojiStickers = stickers
+            strongSelf.animatedEmojiStickersValue.set(.single(stickers))
         })
         
         self.userLimitsConfigurationDisposable = (self.account.postbox.peerView(id: self.account.peerId)
@@ -314,6 +401,7 @@ public final class AccountContextImpl: AccountContext {
         self.managedAppSpecificContactsDisposable?.dispose()
         self.contentSettingsDisposable?.dispose()
         self.appConfigurationDisposable?.dispose()
+        self.countriesConfigurationDisposable?.dispose()
         self.experimentalUISettingsDisposable?.dispose()
         self.animatedEmojiStickersDisposable?.dispose()
     }
@@ -342,13 +430,16 @@ public final class AccountContextImpl: AccountContext {
     public func chatLocationInput(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>) -> ChatLocationInput {
         switch location {
         case let .peer(peerId):
-            return .peer(peerId: peerId)
+            return .peer(peerId: peerId, threadId: nil)
         case let .replyThread(data):
-            let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
-            return .thread(peerId: data.messageId.peerId, threadId: makeMessageThreadId(data.messageId), data: context.state)
-        case let .feed(id):
-            let context = chatLocationContext(holder: contextHolder, account: self.account, feedId: id)
-            return .feed(id: id, data: context.state)
+            if data.isForumPost {
+                return .peer(peerId: data.messageId.peerId, threadId: Int64(data.messageId.id))
+            } else {
+                let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
+                return .thread(peerId: data.messageId.peerId, threadId: makeMessageThreadId(data.messageId), data: context.state)
+            }
+        case .feed:
+            preconditionFailure()
         }
     }
     
@@ -357,36 +448,58 @@ public final class AccountContextImpl: AccountContext {
         case .peer:
             return .single(nil)
         case let .replyThread(data):
-            let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
-            return context.maxReadOutgoingMessageId
-        case let .feed(id):
-            let context = chatLocationContext(holder: contextHolder, account: self.account, feedId: id)
-            return context.maxReadOutgoingMessageId
+            if data.isForumPost, let peerId = location.peerId {
+                let viewKey: PostboxViewKey = .messageHistoryThreadInfo(peerId: data.messageId.peerId, threadId: Int64(data.messageId.id))
+                return self.account.postbox.combinedView(keys: [viewKey])
+                |> map { views -> MessageId? in
+                    if let threadInfo = views.views[viewKey] as? MessageHistoryThreadInfoView, let data = threadInfo.info?.data.get(MessageHistoryThreadData.self) {
+                        return MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: data.maxOutgoingReadId)
+                    } else {
+                        return nil
+                    }
+                }
+            } else {
+                let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
+                return context.maxReadOutgoingMessageId
+            }
+        case .feed:
+            return .single(nil)
         }
     }
 
     public func chatLocationUnreadCount(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>) -> Signal<Int, NoError> {
         switch location {
         case let .peer(peerId):
-            let unreadCountsKey: PostboxViewKey = .unreadCounts(items: [.peer(peerId), .total(nil)])
+            let unreadCountsKey: PostboxViewKey = .unreadCounts(items: [.peer(id: peerId, handleThreads: false), .total(nil)])
             return self.account.postbox.combinedView(keys: [unreadCountsKey])
             |> map { views in
                 var unreadCount: Int32 = 0
-
+                
                 if let view = views.views[unreadCountsKey] as? UnreadMessageCountsView {
-                    if let count = view.count(for: .peer(peerId)) {
+                    if let count = view.count(for: .peer(id: peerId, handleThreads: false)) {
                         unreadCount = count
                     }
                 }
-
+                
                 return Int(unreadCount)
             }
         case let .replyThread(data):
-            let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
-            return context.unreadCount
-        case let .feed(id):
-            let context = chatLocationContext(holder: contextHolder, account: self.account, feedId: id)
-            return context.unreadCount
+            if data.isForumPost {
+                let viewKey: PostboxViewKey = .messageHistoryThreadInfo(peerId: data.messageId.peerId, threadId: Int64(data.messageId.id))
+                return self.account.postbox.combinedView(keys: [viewKey])
+                |> map { views -> Int in
+                    if let threadInfo = views.views[viewKey] as? MessageHistoryThreadInfoView, let data = threadInfo.info?.data.get(MessageHistoryThreadData.self) {
+                        return Int(data.incomingUnreadCount)
+                    } else {
+                        return 0
+                    }
+                }
+            } else {
+                let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
+                return context.unreadCount
+            }
+        case .feed:
+            return .single(0)
         }
     }
     
@@ -397,9 +510,8 @@ public final class AccountContextImpl: AccountContext {
         case let .replyThread(data):
             let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
             context.applyMaxReadIndex(messageIndex: messageIndex)
-        case let .feed(id):
-            let context = chatLocationContext(holder: contextHolder, account: self.account, feedId: id)
-            context.applyMaxReadIndex(messageIndex: messageIndex)
+        case .feed:
+            break
         }
     }
     
@@ -561,30 +673,11 @@ private func chatLocationContext(holder: Atomic<ChatLocationContextHolder?>, acc
     return holder.context
 }
 
-private func chatLocationContext(holder: Atomic<ChatLocationContextHolder?>, account: Account, feedId: Int32) -> FeedHistoryContext {
-    let holder = holder.modify { current in
-        if let current = current as? ChatLocationFeedContextHolderImpl {
-            return current
-        } else {
-            return ChatLocationFeedContextHolderImpl(account: account, feedId: feedId)
-        }
-    } as! ChatLocationFeedContextHolderImpl
-    return holder.context
-}
-
 private final class ChatLocationReplyContextHolderImpl: ChatLocationContextHolder {
     let context: ReplyThreadHistoryContext
     
     init(account: Account, data: ChatReplyThreadMessage) {
         self.context = ReplyThreadHistoryContext(account: account, peerId: data.messageId.peerId, data: data)
-    }
-}
-
-private final class ChatLocationFeedContextHolderImpl: ChatLocationContextHolder {
-    let context: FeedHistoryContext
-    
-    init(account: Account, feedId: Int32) {
-        self.context = FeedHistoryContext(account: account, feedId: feedId)
     }
 }
 
@@ -600,4 +693,64 @@ func getAppConfiguration(postbox: Postbox) -> Signal<AppConfiguration, NoError> 
         return appConfiguration
     }
     |> distinctUntilChanged
+}
+
+private func loadCountryCodes() -> [Country] {
+    guard let filePath = getAppBundle().path(forResource: "PhoneCountries", ofType: "txt") else {
+        return []
+    }
+    guard let stringData = try? Data(contentsOf: URL(fileURLWithPath: filePath)) else {
+        return []
+    }
+    guard let data = String(data: stringData, encoding: .utf8) else {
+        return []
+    }
+    
+    let delimiter = ";"
+    let endOfLine = "\n"
+    
+    var result: [Country] = []
+//    var countriesByPrefix: [String: (Country, Country.CountryCode)] = [:]
+    
+    var currentLocation = data.startIndex
+    
+    let locale = Locale(identifier: "en-US")
+    
+    while true {
+        guard let codeRange = data.range(of: delimiter, options: [], range: currentLocation ..< data.endIndex) else {
+            break
+        }
+        
+        let countryCode = String(data[currentLocation ..< codeRange.lowerBound])
+        
+        guard let idRange = data.range(of: delimiter, options: [], range: codeRange.upperBound ..< data.endIndex) else {
+            break
+        }
+        
+        let countryId = String(data[codeRange.upperBound ..< idRange.lowerBound])
+        
+        guard let patternRange = data.range(of: delimiter, options: [], range: idRange.upperBound ..< data.endIndex) else {
+            break
+        }
+        
+        let pattern = String(data[idRange.upperBound ..< patternRange.lowerBound])
+        
+        let maybeNameRange = data.range(of: endOfLine, options: [], range: patternRange.upperBound ..< data.endIndex)
+        
+        let countryName = locale.localizedString(forIdentifier: countryId) ?? ""
+        if let _ = Int(countryCode) {
+            let code = Country.CountryCode(code: countryCode, prefixes: [], patterns: !pattern.isEmpty ? [pattern] : [])
+            let country = Country(id: countryId, name: countryName, localizedName: nil, countryCodes: [code], hidden: false)
+            result.append(country)
+//            countriesByPrefix["\(code.code)"] = (country, code)
+        }
+        
+        if let maybeNameRange = maybeNameRange {
+            currentLocation = maybeNameRange.upperBound
+        } else {
+            break
+        }
+    }
+        
+    return result
 }

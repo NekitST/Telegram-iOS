@@ -19,17 +19,14 @@ public let sharedReactionStaticImage = Queue(name: "SharedReactionStaticImage", 
 public func reactionStaticImage(context: AccountContext, animation: TelegramMediaFile, pixelSize: CGSize, queue: Queue) -> Signal<EngineMediaResource.ResourceData, NoError> {
     return context.engine.resources.custom(id: "\(animation.resource.id.stringRepresentation):reaction-static-\(pixelSize.width)x\(pixelSize.height)-v10", fetch: EngineMediaResource.Fetch {
         return Signal { subscriber in
-            let fetchDisposable = fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, reference: MediaResourceReference.standalone(resource: animation.resource)).start()
+            let fetchDisposable = fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, userLocation: .other, userContentType: .image, reference: MediaResourceReference.standalone(resource: animation.resource)).start()
             
-            let type: AnimationCacheAnimationType
-            if animation.isVideoSticker || animation.isVideoEmoji {
-                type = .video
-            } else if animation.isAnimatedSticker {
-                type = .lottie
-            } else {
-                type = .still
+            var customColor: UIColor?
+            if animation.isCustomTemplateEmoji {
+                customColor = nil
             }
-            let fetchFrame = animationCacheFetchFile(context: context, resource: MediaResourceReference.standalone(resource: animation.resource), type: type, keyframeOnly: true)
+            
+            let fetchFrame = animationCacheFetchFile(context: context, userLocation: .other, userContentType: .sticker, resource: MediaResourceReference.standalone(resource: animation.resource), type: AnimationCacheAnimationType(file: animation), keyframeOnly: true, customColor: customColor)
             
             class AnimationCacheItemWriterImpl: AnimationCacheItemWriter {
                 let queue: Queue
@@ -45,16 +42,17 @@ public func reactionStaticImage(context: AccountContext, animation: TelegramMedi
                 }
                 
                 func add(with drawingBlock: (AnimationCacheItemDrawingSurface) -> Double?, proposedWidth: Int, proposedHeight: Int, insertKeyframe: Bool) {
-                    let renderContext = DrawingContext(size: CGSize(width: proposedWidth, height: proposedHeight), scale: 1.0, clear: true)
-                    let _ = drawingBlock(AnimationCacheItemDrawingSurface(
-                        argb: renderContext.bytes.assumingMemoryBound(to: UInt8.self),
-                        width: Int(renderContext.scaledSize.width),
-                        height: Int(renderContext.scaledSize.height),
-                        bytesPerRow: renderContext.bytesPerRow,
-                        length: renderContext.length
-                    ))
-                    if let image = renderContext.generateImage() {
-                        self.frameReceived(image)
+                    if let renderContext = DrawingContext(size: CGSize(width: proposedWidth, height: proposedHeight), scale: 1.0, clear: true) {
+                        let _ = drawingBlock(AnimationCacheItemDrawingSurface(
+                            argb: renderContext.bytes.assumingMemoryBound(to: UInt8.self),
+                            width: Int(renderContext.scaledSize.width),
+                            height: Int(renderContext.scaledSize.height),
+                            bytesPerRow: renderContext.bytesPerRow,
+                            length: renderContext.length
+                        ))
+                        if let image = renderContext.generateImage() {
+                            self.frameReceived(image)
+                        }
                     }
                 }
                 

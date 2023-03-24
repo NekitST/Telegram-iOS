@@ -7,6 +7,7 @@ import SwiftSignalKit
 import TelegramPresentationData
 import AccountContext
 import WallpaperBackgroundNode
+import ChatControllerInteraction
 
 private let titleFont = UIFont.systemFont(ofSize: 13.0)
 
@@ -26,10 +27,18 @@ class ChatUnreadItem: ListViewItem {
     func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, previousItem: ListViewItem?, nextItem: ListViewItem?, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
         async {
             let node = ChatUnreadItemNode()
-            node.layoutForParams(params, item: self, previousItem: previousItem, nextItem: nextItem)
+            
+            let dateAtBottom = !chatItemsHaveCommonDateHeader(self, nextItem)
+            let (layout, apply) = node.asyncLayout()(self, params, dateAtBottom)
+            
+            node.contentSize = layout.contentSize
+            node.insets = layout.insets
+            
             Queue.mainQueue().async {
                 completion(node, {
-                    return (nil, { _ in })
+                    return (nil, { _ in
+                        apply()
+                    })
                 })
             }
         }
@@ -167,10 +176,7 @@ class ChatUnreadItemNode: ListViewItemNode {
                         strongSelf.backgroundNode.isHidden = true
                         backgroundContent.frame = strongSelf.backgroundNode.frame
                         if let (rect, containerSize) = strongSelf.absolutePosition {
-                            var backgroundFrame = backgroundContent.frame
-                            backgroundFrame.origin.x += rect.minX
-                            backgroundFrame.origin.y += rect.minY
-                            backgroundContent.update(rect: backgroundFrame, within: containerSize, transition: .immediate)
+                            strongSelf.updateAbsoluteRect(rect, within: containerSize)
                         }
                     } else {
                         strongSelf.backgroundNode.isHidden = false
@@ -187,7 +193,7 @@ class ChatUnreadItemNode: ListViewItemNode {
         if let backgroundContent = self.backgroundContent {
             var backgroundFrame = backgroundContent.frame
             backgroundFrame.origin.x += rect.minX
-            backgroundFrame.origin.y += rect.minY
+            backgroundFrame.origin.y += containerSize.height - rect.minY
             backgroundContent.update(rect: backgroundFrame, within: containerSize, transition: .immediate)
         }
     }

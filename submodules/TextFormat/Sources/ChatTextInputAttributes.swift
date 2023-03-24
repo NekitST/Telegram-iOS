@@ -192,17 +192,50 @@ public final class ChatTextInputTextUrlAttribute: NSObject {
     }
 }
 
-public final class ChatTextInputTextCustomEmojiAttribute: NSObject {
+public final class ChatTextInputTextCustomEmojiAttribute: NSObject, Codable {
+    private enum CodingKeys: String, CodingKey {
+        case interactivelySelectedFromPackId
+        case fileId
+        case file
+        case topicId
+        case topicInfo
+    }
+    
     public let interactivelySelectedFromPackId: ItemCollectionId?
     public let fileId: Int64
     public let file: TelegramMediaFile?
+    public let topicInfo: (Int64, EngineMessageHistoryThread.Info)?
     
-    public init(interactivelySelectedFromPackId: ItemCollectionId?, fileId: Int64, file: TelegramMediaFile?) {
+    public init(interactivelySelectedFromPackId: ItemCollectionId?, fileId: Int64, file: TelegramMediaFile?, topicInfo: (Int64, EngineMessageHistoryThread.Info)? = nil) {
         self.interactivelySelectedFromPackId = interactivelySelectedFromPackId
         self.fileId = fileId
         self.file = file
+        self.topicInfo = topicInfo
         
         super.init()
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.interactivelySelectedFromPackId = try container.decodeIfPresent(ItemCollectionId.self, forKey: .interactivelySelectedFromPackId)
+        self.fileId = try container.decode(Int64.self, forKey: .fileId)
+        self.file = try container.decodeIfPresent(TelegramMediaFile.self, forKey: .file)
+        if let topicId = try container.decodeIfPresent(Int64.self, forKey: .topicId), let topicInfo = try container.decodeIfPresent(EngineMessageHistoryThread.Info.self, forKey: .topicInfo) {
+            self.topicInfo = (topicId, topicInfo)
+        } else {
+            self.topicInfo = nil
+        }
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.interactivelySelectedFromPackId, forKey: .interactivelySelectedFromPackId)
+        try container.encode(self.fileId, forKey: .fileId)
+        try container.encodeIfPresent(self.file, forKey: .file)
+        if let (topicId, topicInfo) = self.topicInfo {
+            try container.encode(topicId, forKey: .topicId)
+            try container.encode(topicInfo, forKey: .topicInfo)
+        }
     }
     
     override public func isEqual(_ object: Any?) -> Bool {
@@ -343,6 +376,19 @@ private func refreshTextMentions(text: NSString, initialAttributedText: NSAttrib
     }
 }
 
+private let textUrlEdgeCharacters: CharacterSet = {
+    var set: CharacterSet = .alphanumerics
+    set.formUnion(.symbols)
+    set.formUnion(.punctuationCharacters)
+    return set
+}()
+
+private let textUrlCharacters: CharacterSet = {
+    var set: CharacterSet = textUrlEdgeCharacters
+    set.formUnion(.whitespacesAndNewlines)
+    return set
+}()
+
 private func refreshTextUrls(text: NSString, initialAttributedText: NSAttributedString, attributedText: NSMutableAttributedString, fullRange: NSRange) {
     var textUrlRanges: [(NSRange, ChatTextInputTextUrlAttribute)] = []
     initialAttributedText.enumerateAttribute(ChatTextInputAttributes.textUrl, in: fullRange, options: [], using: { value, range, _ in
@@ -359,7 +405,7 @@ private func refreshTextUrls(text: NSString, initialAttributedText: NSAttributed
         var validLower = range.lowerBound
         inner1: for i in range.lowerBound ..< range.upperBound {
             if let c = UnicodeScalar(text.character(at: i)) {
-                if alphanumericCharacters.contains(c) || c == " " as UnicodeScalar {
+                if textUrlCharacters.contains(c) {
                     validLower = i
                     break inner1
                 }
@@ -370,7 +416,7 @@ private func refreshTextUrls(text: NSString, initialAttributedText: NSAttributed
         var validUpper = range.upperBound
         inner2: for i in (validLower ..< range.upperBound).reversed() {
             if let c = UnicodeScalar(text.character(at: i)) {
-                if alphanumericCharacters.contains(c) || c == " " as UnicodeScalar {
+                if textUrlCharacters.contains(c) {
                     validUpper = i + 1
                     break inner2
                 }
@@ -382,7 +428,7 @@ private func refreshTextUrls(text: NSString, initialAttributedText: NSAttributed
         let minLower = (i == 0) ? fullRange.lowerBound : textUrlRanges[i - 1].0.upperBound
         inner3: for i in (minLower ..< validLower).reversed() {
             if let c = UnicodeScalar(text.character(at: i)) {
-                if alphanumericCharacters.contains(c) {
+                if textUrlEdgeCharacters.contains(c) {
                     validLower = i
                 } else {
                     break inner3
@@ -395,7 +441,7 @@ private func refreshTextUrls(text: NSString, initialAttributedText: NSAttributed
         let maxUpper = (i == textUrlRanges.count - 1) ? fullRange.upperBound : textUrlRanges[i + 1].0.lowerBound
         inner3: for i in validUpper ..< maxUpper {
             if let c = UnicodeScalar(text.character(at: i)) {
-                if alphanumericCharacters.contains(c) {
+                if textUrlEdgeCharacters.contains(c) {
                     validUpper = i + 1
                 } else {
                     break inner3
@@ -417,7 +463,7 @@ private func refreshTextUrls(text: NSString, initialAttributedText: NSAttributed
                 var combine = true
                 inner: for j in textUrlRanges[i].0.upperBound ..< textUrlRanges[i + 1].0.lowerBound {
                     if let c = UnicodeScalar(text.character(at: j)) {
-                        if alphanumericCharacters.contains(c) || c == " " as UnicodeScalar {
+                        if textUrlCharacters.contains(c) {
                         } else {
                             combine = false
                             break inner

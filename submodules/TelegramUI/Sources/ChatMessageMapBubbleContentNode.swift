@@ -64,7 +64,7 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
         self.view.addGestureRecognizer(tapRecognizer)
     }
     
-    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
+    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize, _ avatarInset: CGFloat) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
         let makeImageLayout = self.imageNode.asyncLayout()
         let makePinLayout = self.pinNode.asyncLayout()
         let statusLayout = self.dateAndStatusNode.asyncLayout()
@@ -73,7 +73,7 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
         
         let previousMedia = self.media
         
-        return { item, layoutConstants, preparePosition, _, constrainedSize in
+        return { item, layoutConstants, preparePosition, _, constrainedSize, _ in
             var selectedMedia: TelegramMediaMap?
             var activeLiveBroadcastingTimeout: Int32?
             for media in item.message.media {
@@ -86,6 +86,11 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                         }
                     }
                 }
+            }
+            
+            var incoming = item.message.effectivelyIncoming(item.context.account.peerId)
+            if case .forwardedMessages = item.associatedData.subject {
+                incoming = false
             }
             
             let bubbleInsets: UIEdgeInsets
@@ -106,12 +111,12 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                     imageSize = CGSize(width: fitWidth, height: floor(fitWidth * 0.5))
                     
                     if let venue = selectedMedia.venue {
-                        titleString = NSAttributedString(string: venue.title, font: titleFont, textColor: item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
+                        titleString = NSAttributedString(string: venue.title, font: titleFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
                         if let address = venue.address, !address.isEmpty {
-                            textString = NSAttributedString(string: address, font: textFont, textColor: item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.secondaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor)
+                            textString = NSAttributedString(string: address, font: textFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.secondaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor)
                         }
                     } else {
-                        textString = NSAttributedString(string: " ", font: textFont, textColor: item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.secondaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor)
+                        textString = NSAttributedString(string: " ", font: textFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.secondaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor)
                     }
                 } else {
                     let fitWidth: CGFloat = min(constrainedSize.width, layoutConstants.image.maxDimensions.width)
@@ -120,7 +125,7 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 }
                 
                 if selectedMedia.liveBroadcastingTimeout != nil {
-                    titleString = NSAttributedString(string: item.presentationData.strings.Message_LiveLocation, font: liveTitleFont, textColor: item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
+                    titleString = NSAttributedString(string: item.presentationData.strings.Message_LiveLocation, font: liveTitleFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
                 }
             } else {
                 imageSize = CGSize(width: 75.0, height: 75.0)
@@ -183,7 +188,10 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 }
                 var viewCount: Int?
                 var dateReplies = 0
-                let dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                    dateReactionsAndPeers = ([], [])
+                }
                 for attribute in item.message.attributes {
                     if let attribute = attribute as? EditedMessageAttribute {
                         edited = !attribute.isHidden
@@ -202,13 +210,13 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                     }
                 }
                 
-                let dateText = stringForMessageTimestampStatus(accountPeerId: item.context.account.peerId, message: item.message, dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings)
+                let dateText = stringForMessageTimestampStatus(accountPeerId: item.context.account.peerId, message: item.message, dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings, associatedData: item.associatedData)
                 
                 let statusType: ChatMessageDateAndStatusType?
                 switch position {
                     case .linear(_, .None), .linear(_, .Neighbour(true, _, _)):
                         if selectedMedia?.venue != nil || activeLiveBroadcastingTimeout != nil {
-                            if item.message.effectivelyIncoming(item.context.account.peerId) {
+                            if incoming {
                                 statusType = .BubbleIncoming
                             } else {
                                 if item.message.flags.contains(.Failed) {
@@ -220,7 +228,7 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                                 }
                             }
                         } else {
-                            if item.message.effectivelyIncoming(item.context.account.peerId) {
+                            if incoming {
                                 statusType = .ImageIncoming
                             } else {
                                 if item.message.flags.contains(.Failed) {
@@ -280,7 +288,7 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 }
                 
                 return (contentWidth, { boundingWidth in
-                    let arguments = TransformImageArguments(corners: imageCorners, imageSize: imageSize, boundingSize: imageSize, intrinsicInsets: UIEdgeInsets(), emptyColor: item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.mediaPlaceholderColor : item.presentationData.theme.theme.chat.message.outgoing.mediaPlaceholderColor)
+                    let arguments = TransformImageArguments(corners: imageCorners, imageSize: imageSize, boundingSize: imageSize, intrinsicInsets: UIEdgeInsets(), emptyColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.mediaPlaceholderColor : item.presentationData.theme.theme.chat.message.outgoing.mediaPlaceholderColor)
                     
                     let imageLayoutSize = CGSize(width: imageSize.width + bubbleInsets.left + bubbleInsets.right, height: imageSize.height + bubbleInsets.top + bubbleInsets.bottom)
                     
@@ -376,8 +384,8 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                                 let timerSize = CGSize(width: 28.0, height: 28.0)
                                 strongSelf.liveTimerNode?.frame = CGRect(origin: CGPoint(x: floor(imageFrame.maxX - 10.0 - timerSize.width), y: floor(imageFrame.maxY + 11.0)), size: timerSize)
                                 
-                                let timerForegroundColor: UIColor = item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.accentControlColor : item.presentationData.theme.theme.chat.message.outgoing.accentControlColor
-                                let timerTextColor: UIColor = item.message.effectivelyIncoming(item.context.account.peerId) ? item.presentationData.theme.theme.chat.message.incoming.secondaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor
+                                let timerForegroundColor: UIColor = incoming ? item.presentationData.theme.theme.chat.message.incoming.accentControlColor : item.presentationData.theme.theme.chat.message.outgoing.accentControlColor
+                                let timerTextColor: UIColor = incoming ? item.presentationData.theme.theme.chat.message.incoming.secondaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor
                                 strongSelf.liveTimerNode?.update(backgroundColor: timerForegroundColor.withAlphaComponent(0.4), foregroundColor: timerForegroundColor, textColor: timerTextColor, beginTimestamp: Double(item.message.timestamp), timeout: Double(activeLiveBroadcastingTimeout), strings: item.presentationData.strings)
                                 
                                 if strongSelf.liveTextNode == nil {
@@ -406,7 +414,7 @@ class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                                         if let strongSelf = self {
                                             strongSelf.timeoutTimer?.0.invalidate()
                                             strongSelf.timeoutTimer = nil
-                                            item.controllerInteraction.requestMessageUpdate(item.message.id)
+                                            item.controllerInteraction.requestMessageUpdate(item.message.id, false)
                                         }
                                     }, queue: Queue.mainQueue())
                                     strongSelf.timeoutTimer = (timer, timeoutDeadline)

@@ -3,6 +3,7 @@ import AsyncDisplayKit
 import Display
 import SwiftSignalKit
 import RangeSet
+import TextFormat
 
 public enum MediaPlayerScrubbingNodeCap {
     case square
@@ -27,6 +28,39 @@ public struct MediaPlayerScrubbingChapter: Equatable {
         self.title = title
         self.start = start
     }
+}
+
+public func parseMediaPlayerChapters(_ string: NSAttributedString) -> [MediaPlayerScrubbingChapter] {
+    var existingTimecodes = Set<Double>()
+    var timecodeRanges: [(NSRange, TelegramTimecode)] = []
+    var lineRanges: [NSRange] = []
+    string.enumerateAttributes(in: NSMakeRange(0, string.length), options: [], using: { attributes, range, _ in
+        if let timecode = attributes[NSAttributedString.Key(TelegramTextAttributes.Timecode)] as? TelegramTimecode {
+            if !existingTimecodes.contains(timecode.time) {
+                timecodeRanges.append((range, timecode))
+                existingTimecodes.insert(timecode.time)
+            }
+        }
+    })
+    (string.string as NSString).enumerateSubstrings(in: NSMakeRange(0, string.length), options: .byLines, using: { _, range, _, _ in
+        lineRanges.append(range)
+    })
+    
+    var chapters: [MediaPlayerScrubbingChapter] = []
+    for (timecodeRange, timecode) in timecodeRanges {
+        inner: for lineRange in lineRanges {
+            if lineRange.contains(timecodeRange.location) {
+                if lineRange.length > timecodeRange.length && timecodeRange.location < lineRange.location + 4 {
+                    var title = ((string.string as NSString).substring(with: lineRange) as NSString).replacingCharacters(in: NSMakeRange(timecodeRange.location - lineRange.location, timecodeRange.length), with: "")
+                    title = title.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: .punctuationCharacters)
+                    chapters.append(MediaPlayerScrubbingChapter(title: title, start: timecode.time))
+                }
+                break inner
+            }
+        }
+    }
+    
+    return chapters
 }
 
 private final class MediaPlayerScrubbingNodeButton: ASDisplayNode, UIGestureRecognizerDelegate {
@@ -227,6 +261,7 @@ private final class MediaPlayerScrubbingBufferingNode: ASDisplayNode {
         self.containerNode = ASDisplayNode()
         self.containerNode.isLayerBacked = true
         self.containerNode.clipsToBounds = true
+        self.containerNode.cornerRadius = lineHeight / 2.0
         
         self.foregroundNode = ASImageNode()
         self.foregroundNode.isLayerBacked = true
@@ -266,7 +301,7 @@ private final class MediaPlayerScrubbingBufferingNode: ASDisplayNode {
 public final class MediaPlayerScrubbingNode: ASDisplayNode {
     private var contentNodes: MediaPlayerScrubbingNodeContentNodes
     
-    private var displayLink: CADisplayLink?
+    private var displayLink: SharedDisplayLinkDriver.Link?
     private var isInHierarchyValue: Bool = false
     
     private var playbackStatusValue: MediaPlayerPlaybackStatus?
@@ -313,6 +348,15 @@ public final class MediaPlayerScrubbingNode: ASDisplayNode {
                 case let .custom(node):
                     node.handleNodeContainer?.verticalPanEnabled = self.enableFineScrubbing
             }
+        }
+    }
+    
+    public var containerNode: ASDisplayNode {
+        switch self.contentNodes {
+            case let .standard(node):
+                return node.containerNode
+            case let .custom(node):
+                return node.backgroundNode
         }
     }
     
@@ -679,7 +723,10 @@ public final class MediaPlayerScrubbingNode: ASDisplayNode {
         self.updateProgressAnimations()
     }
     
+    private var isCollapsed = false
     public func setCollapsed(_ collapsed: Bool, animated: Bool) {
+        self.isCollapsed = collapsed
+        
         let alpha: CGFloat = collapsed ? 0.0 : 1.0
         let backgroundScale: CGFloat = collapsed ? 0.4 : 1.0
         let handleScale: CGFloat = collapsed ? 0.2 : 1.0
@@ -764,20 +811,9 @@ public final class MediaPlayerScrubbingNode: ASDisplayNode {
         
         if needsAnimation {
             if self.displayLink == nil {
-                class DisplayLinkProxy: NSObject {
-                    var f: () -> Void
-                    init(_ f: @escaping () -> Void) {
-                        self.f = f
-                    }
-                    
-                    @objc func displayLinkEvent() {
-                        self.f()
-                    }
-                }
-                let displayLink = CADisplayLink(target: DisplayLinkProxy({ [weak self] in
+                let displayLink = SharedDisplayLinkDriver.shared.add { [weak self] in
                     self?.updateProgress()
-                }), selector: #selector(DisplayLinkProxy.displayLinkEvent))
-                displayLink.add(to: .main, forMode: RunLoop.Mode.common)
+                }
                 self.displayLink = displayLink
             }
             self.displayLink?.isPaused = false
@@ -924,7 +960,12 @@ public final class MediaPlayerScrubbingNode: ASDisplayNode {
                         
                         if let handleNodeContainer = node.handleNodeContainer {
                             handleNodeContainer.bounds = bounds.offsetBy(dx: -floorToScreenPixels(bounds.size.width * progress), dy: 0.0)
-                            handleNodeContainer.isHidden = false
+                            if !self.isCollapsed {
+                                if handleNodeContainer.alpha.isZero {
+                                    handleNodeContainer.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
+                                }
+                                handleNodeContainer.alpha = 1.0
+                            }
                         }
                     } else if let statusValue = self.statusValue {
                         var actualTimestamp: Double
@@ -952,15 +993,20 @@ public final class MediaPlayerScrubbingNode: ASDisplayNode {
                         
                         if let handleNodeContainer = node.handleNodeContainer {
                             handleNodeContainer.bounds = bounds.offsetBy(dx: -floorToScreenPixels(bounds.size.width * progress), dy: 0.0)
-                            handleNodeContainer.isHidden = false
+                            if !self.isCollapsed {
+                                if handleNodeContainer.alpha.isZero {
+                                    handleNodeContainer.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
+                                }
+                                handleNodeContainer.alpha = 1.0
+                            }
                         }
                     } else {
-                        node.handleNodeContainer?.isHidden = true
                         node.foregroundNode.frame = CGRect(origin: backgroundFrame.origin, size: CGSize(width: 0.0, height: backgroundFrame.size.height))
+                        node.handleNodeContainer?.alpha = 0.0
                     }
                 } else {
                     node.foregroundNode.frame = CGRect(origin: backgroundFrame.origin, size: CGSize(width: 0.0, height: backgroundFrame.size.height))
-                    node.handleNodeContainer?.isHidden = true
+                    node.handleNodeContainer?.alpha = 0.0
                 }
             case let .custom(node):
                 if let handleNodeContainer = node.handleNodeContainer {

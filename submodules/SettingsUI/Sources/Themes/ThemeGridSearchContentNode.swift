@@ -513,7 +513,7 @@ final class ThemeGridSearchContentNode: SearchDisplayControllerContentNode {
                                                 nextOffset = newNextOffset
                                             }
                                         }
-                                        let merged = ChatContextResultCollection(botId: collection.botId, peerId: collection.peerId, query: collection.query, geoPoint: collection.geoPoint, queryId: nextResults?.queryId ?? collection.queryId, nextOffset: nextOffset ?? "", presentation: collection.presentation, switchPeer: collection.switchPeer, results: results, cacheTimeout: collection.cacheTimeout)
+                                        let merged = ChatContextResultCollection(botId: collection.botId, peerId: collection.peerId, query: collection.query, geoPoint: collection.geoPoint, queryId: nextResults?.queryId ?? collection.queryId, nextOffset: nextOffset ?? "", presentation: collection.presentation, switchPeer: collection.switchPeer, webView: collection.webView, results: results, cacheTimeout: collection.cacheTimeout)
                                         return (merged, nextOffset)
                                     }
                                     |> mapToSignal { newCollection, nextOffset -> Signal<([ThemeGridSearchEntry], Bool)?, NoError> in
@@ -539,7 +539,7 @@ final class ThemeGridSearchContentNode: SearchDisplayControllerContentNode {
                         
                         return (.complete() |> delay(0.1, queue: Queue.concurrentDefaultQueue()))
                         |> then(
-                            requestContextResults(context: context, botId: user.id, query: wallpaperQuery, peerId: context.account.peerId, limit: 16)
+                            requestContextResults(engine: context.engine, botId: user.id, query: wallpaperQuery, peerId: context.account.peerId, limit: 16)
                             |> map { results -> ChatContextResultCollection? in
                                 return results?.results
                             }

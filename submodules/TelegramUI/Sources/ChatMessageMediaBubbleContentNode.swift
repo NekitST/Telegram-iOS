@@ -9,6 +9,7 @@ import TelegramUIPreferences
 import TelegramPresentationData
 import AccountContext
 import GridMessageSelectionNode
+import ChatControllerInteraction
 
 class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
     override var supportsMosaic: Bool {
@@ -71,10 +72,10 @@ class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
         fatalError("init(coder:) has not been implemented")
     }
     
-    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
+    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize, _ avatarInset: CGFloat) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
         let interactiveImageLayout = self.interactiveImageNode.asyncLayout()
         
-        return { item, layoutConstants, preparePosition, selection, constrainedSize in
+        return { item, layoutConstants, preparePosition, selection, constrainedSize, _ in
             var selectedMedia: Media?
             var automaticDownload: InteractiveMediaNodeAutodownloadMode = .none
             var automaticPlayback: Bool = false
@@ -99,13 +100,13 @@ class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
                         }
                         
                         if !item.message.containsSecretMedia {
-                            if telegramFile.isAnimated && item.controllerInteraction.automaticMediaDownloadSettings.autoplayGifs {
+                            if telegramFile.isAnimated && item.context.sharedContext.energyUsageSettings.autoplayGif {
                                 if case .full = automaticDownload {
                                     automaticPlayback = true
                                 } else {
                                     automaticPlayback = item.context.account.postbox.mediaBox.completedResourcePath(telegramFile.resource) != nil
                                 }
-                            } else if (telegramFile.isVideo && !telegramFile.isAnimated) && item.controllerInteraction.automaticMediaDownloadSettings.autoplayVideos {
+                            } else if (telegramFile.isVideo && !telegramFile.isAnimated) && item.context.sharedContext.energyUsageSettings.autoplayVideo {
                                 if case .full = automaticDownload {
                                     automaticPlayback = true
                                 } else {
@@ -130,13 +131,13 @@ class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
                                 }
                                 
                                 if !item.message.containsSecretMedia {
-                                    if telegramFile.isAnimated && item.controllerInteraction.automaticMediaDownloadSettings.autoplayGifs {
+                                    if telegramFile.isAnimated && item.context.sharedContext.energyUsageSettings.autoplayGif {
                                         if case .full = automaticDownload {
                                             automaticPlayback = true
                                         } else {
                                             automaticPlayback = item.context.account.postbox.mediaBox.completedResourcePath(telegramFile.resource) != nil
                                         }
-                                    } else if (telegramFile.isVideo && !telegramFile.isAnimated) && item.controllerInteraction.automaticMediaDownloadSettings.autoplayVideos {
+                                    } else if (telegramFile.isVideo && !telegramFile.isAnimated) && item.context.sharedContext.energyUsageSettings.autoplayVideo {
                                         if case .full = automaticDownload {
                                             automaticPlayback = true
                                         } else {
@@ -218,7 +219,10 @@ class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
             }
             var viewCount: Int?
             var dateReplies = 0
-            let dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+            var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+            if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                dateReactionsAndPeers = ([], [])
+            }
             for attribute in item.message.attributes {
                 if let attribute = attribute as? EditedMessageAttribute {
                     if case .mosaic = preparePosition {
@@ -233,8 +237,8 @@ class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
                     }
                 }
             }
-
-            let dateText = stringForMessageTimestampStatus(accountPeerId: item.context.account.peerId, message: item.message, dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings)
+            
+            let dateText = stringForMessageTimestampStatus(accountPeerId: item.context.account.peerId, message: item.message, dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings, associatedData: item.associatedData)
 
             let statusType: ChatMessageDateAndStatusType?
             switch preparePosition {
@@ -274,7 +278,7 @@ class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
                 )
             }
             
-            let (unboundSize, initialWidth, refineLayout) = interactiveImageLayout(item.context, item.presentationData, item.presentationData.dateTimeFormat, item.message, item.associatedData, item.attributes, selectedMedia!, dateAndStatus, automaticDownload, item.associatedData.automaticDownloadPeerType, sizeCalculation, layoutConstants, contentMode, item.controllerInteraction.presentationContext)
+            let (unboundSize, initialWidth, refineLayout) = interactiveImageLayout(item.context, item.presentationData, item.presentationData.dateTimeFormat, item.message, item.associatedData, item.attributes, selectedMedia!, dateAndStatus, automaticDownload, item.associatedData.automaticDownloadPeerType, item.associatedData.automaticDownloadPeerId, sizeCalculation, layoutConstants, contentMode, item.controllerInteraction.presentationContext)
             
             let forceFullCorners = false
             let contentProperties = ChatMessageBubbleContentProperties(hidesSimpleAuthorHeader: true, headerSpacing: 7.0, hidesBackground: .emptyWallpaper, forceFullCorners: forceFullCorners, forceAlignment: .none)

@@ -15,6 +15,7 @@ import PresentationDataUtils
 import UrlHandling
 import AccountUtils
 import PremiumUI
+import StorageUsageScreen
 
 private struct LogoutOptionsItemArguments {
     let addAccount: () -> Void
@@ -109,7 +110,7 @@ private enum LogoutOptionsEntry: ItemListNodeEntry, Equatable {
     }
 }
 
-private func logoutOptionsEntries(presentationData: PresentationData, canAddAccounts: Bool, hasPasscode: Bool, hasWallets: Bool) -> [LogoutOptionsEntry] {
+private func logoutOptionsEntries(presentationData: PresentationData, canAddAccounts: Bool, hasPasscode: Bool) -> [LogoutOptionsEntry] {
     var entries: [LogoutOptionsEntry] = []
     entries.append(.alternativeHeader(presentationData.theme, presentationData.strings.LogoutOptions_AlternativeOptionsSection))
     if canAddAccounts {
@@ -181,7 +182,9 @@ public func logoutOptionsController(context: AccountContext, navigationControlle
         })
         dismissImpl?()
     }, clearCache: {
-        pushControllerImpl?(storageUsageController(context: context))
+        pushControllerImpl?(StorageUsageScreen(context: context, makeStorageUsageExceptionsScreen: { category in
+            return storageUsageExceptionsScreen(context: context, category: category)
+        }))
         dismissImpl?()
     }, changePhoneNumber: {
         let introController = PrivacyIntroController(context: context, mode: .changePhoneNumber(phoneNumber), proceedAction: {
@@ -229,10 +232,19 @@ public func logoutOptionsController(context: AccountContext, navigationControlle
                 supportPeerDisposable.set((supportPeer.get()
                 |> take(1)
                 |> deliverOnMainQueue).start(next: { peerId in
-                    if let peerId = peerId, let navigationController = navigationController {
-                        dismissImpl?()
-                        context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: peerId)))
+                    guard let peerId = peerId else {
+                        return
                     }
+                    let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
+                    |> deliverOnMainQueue).start(next: { peer in
+                        guard let peer = peer else {
+                            return
+                        }
+                        if let navigationController = navigationController {
+                            dismissImpl?()
+                            context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(peer)))
+                        }
+                    })
                 }))
             })
         ]), nil)
@@ -248,19 +260,12 @@ public func logoutOptionsController(context: AccountContext, navigationControlle
         ])
         presentControllerImpl?(alertController, nil)
     })
-    
-    #if ENABLE_WALLET
-    let hasWallets = context.hasWallets
-    #else
-    let hasWallets: Signal<Bool, NoError> = .single(false)
-    #endif
-    
+        
     let signal = combineLatest(queue: .mainQueue(),
         context.sharedContext.presentationData,
-        context.sharedContext.accountManager.accessChallengeData(),
-        hasWallets
+        context.sharedContext.accountManager.accessChallengeData()
     )
-    |> map { presentationData, accessChallengeData, hasWallets -> (ItemListControllerState, (ItemListNodeState, Any)) in
+    |> map { presentationData, accessChallengeData -> (ItemListControllerState, (ItemListNodeState, Any)) in
         let leftNavigationButton = ItemListNavigationButton(content: .text(presentationData.strings.Common_Cancel), style: .regular, enabled: true, action: {
             dismissImpl?()
         })
@@ -274,7 +279,7 @@ public func logoutOptionsController(context: AccountContext, navigationControlle
         }
         
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(presentationData.strings.LogoutOptions_Title), leftNavigationButton: leftNavigationButton, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: logoutOptionsEntries(presentationData: presentationData, canAddAccounts: canAddAccounts, hasPasscode: hasPasscode, hasWallets: hasWallets), style: .blocks)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: logoutOptionsEntries(presentationData: presentationData, canAddAccounts: canAddAccounts, hasPasscode: hasPasscode), style: .blocks)
         
         return (controllerState, (listState, arguments))
     }

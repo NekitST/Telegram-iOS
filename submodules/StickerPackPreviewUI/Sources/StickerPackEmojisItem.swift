@@ -192,7 +192,7 @@ final class StickerPackEmojisItemNode: GridItemNode {
         }
         self.boundsChangeTrackerLayer =  boundsChangeTrackerLayer
         
-        let gestureRecognizer = TapLongTapOrDoubleTapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:)))
+        /*let gestureRecognizer = TapLongTapOrDoubleTapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:)))
         gestureRecognizer.longTap = { [weak self] point, _ in
             guard let strongSelf = self else {
                 return
@@ -203,7 +203,7 @@ final class StickerPackEmojisItemNode: GridItemNode {
                 var emojiAttribute: ChatTextInputTextCustomEmojiAttribute?
                 loop: for attribute in file.attributes {
                     switch attribute {
-                    case let .CustomEmoji(_, displayText, _):
+                    case let .CustomEmoji(_, _, displayText, _):
                         text = displayText
                         emojiAttribute = ChatTextInputTextCustomEmojiAttribute(interactivelySelectedFromPackId: nil, fileId: file.fileId.id, file: file)
                         break loop
@@ -217,7 +217,20 @@ final class StickerPackEmojisItemNode: GridItemNode {
                 }
             }
         }
-        self.containerNode.view.addGestureRecognizer(gestureRecognizer)
+        self.containerNode.view.addGestureRecognizer(gestureRecognizer)*/
+    }
+    
+    func targetItem(at point: CGPoint) -> (TelegramMediaFile, CALayer)? {
+        if let (item, _) = self.item(atPoint: point), let file = item.itemFile {
+            let itemId = EmojiPagerContentComponent.View.ItemLayer.Key(
+                groupId: 0,
+                itemId: .animation(.file(file.fileId))
+            )
+            if let itemLayer = self.visibleItemLayers[itemId] {
+                return (file, itemLayer)
+            }
+        }
+        return nil
     }
     
     @objc private func tapGesture(_ recognizer: TapLongTapOrDoubleTapGestureRecognizer) {
@@ -229,7 +242,7 @@ final class StickerPackEmojisItemNode: GridItemNode {
                     var emojiAttribute: ChatTextInputTextCustomEmojiAttribute?
                     loop: for attribute in file.attributes {
                         switch attribute {
-                        case let .CustomEmoji(_, displayText, _):
+                        case let .CustomEmoji(_, _, displayText, _):
                             text = displayText
                             emojiAttribute = ChatTextInputTextCustomEmojiAttribute(interactivelySelectedFromPackId: nil, fileId: file.fileId.id, file: file)
                             break loop
@@ -354,7 +367,7 @@ final class StickerPackEmojisItemNode: GridItemNode {
             } else {
                 updateItemLayerPlaceholder = true
                 itemTransition = .immediate
-                                
+                
                 let animationData = EntityKeyboardAnimationData(file: item.file)
                 itemLayer = EmojiPagerContentComponent.View.ItemLayer(
                     item: EmojiPagerContentComponent.Item(
@@ -363,7 +376,7 @@ final class StickerPackEmojisItemNode: GridItemNode {
                         itemFile: item.file,
                         subgroupId: nil,
                         icon: .none,
-                        accentTint: false
+                        tintMode: animationData.isTemplate ? .primary : .none
                     ),
                     context: context,
                     attemptSynchronousLoad: attemptSynchronousLoads,
@@ -384,10 +397,14 @@ final class StickerPackEmojisItemNode: GridItemNode {
                                 if let current = strongSelf.visibleItemPlaceholderViews[itemId] {
                                     placeholderView = current
                                 } else {
+                                    var placeholderContent: EmojiPagerContentComponent.View.ItemPlaceholderView.Content?
+                                    if let immediateThumbnailData = item.file.immediateThumbnailData {
+                                        placeholderContent = .thumbnail(immediateThumbnailData)
+                                    }
                                     placeholderView = EmojiPagerContentComponent.View.ItemPlaceholderView(
                                         context: context,
                                         dimensions: item.file.dimensions?.cgSize ?? CGSize(width: 512.0, height: 512.0),
-                                        immediateThumbnailData: item.file.immediateThumbnailData,
+                                        content: placeholderContent,
                                         shimmerView: nil,//strongSelf.shimmerHostView,
                                         color: theme.chat.inputPanel.primaryTextColor.withMultipliedAlpha(0.08),
                                         size: itemNativeFitSize
@@ -423,6 +440,15 @@ final class StickerPackEmojisItemNode: GridItemNode {
                 )
                 self.containerNode.layer.addSublayer(itemLayer)
                 self.visibleItemLayers[itemId] = itemLayer
+            }
+            
+            switch itemLayer.item.tintMode {
+            case .none:
+                break
+            case .accent:
+                itemLayer.layerTintColor = theme.list.itemAccentColor.cgColor
+            case .primary:
+                itemLayer.layerTintColor = theme.list.itemPrimaryTextColor.cgColor
             }
             
             var itemFrame = itemLayout.frame(itemIndex: index)

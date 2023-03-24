@@ -283,7 +283,7 @@ public func quickReactionSetupController(
     
     let controller = ItemListController(context: context, state: signal)
     
-    controller.didScrollWithOffset = { [weak controller] offset, transition, _ in
+    controller.didScrollWithOffset = { [weak controller] offset, transition, _, _ in
         guard let controller = controller else {
             return
         }
@@ -347,6 +347,8 @@ public func quickReactionSetupController(
                         isStandalone: false,
                         isStatusSelection: false,
                         isReactionSelection: true,
+                        isEmojiSelection: false,
+                        hasTrending: false,
                         isQuickReactionSelection: true,
                         topReactionItems: [],
                         areUnicodeEmojiEnabled: false,

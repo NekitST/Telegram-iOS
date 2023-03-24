@@ -28,6 +28,7 @@ import Markdown
 import WebUI
 import BotPaymentsUI
 import PremiumUI
+import AuthorizationUI
 
 private func defaultNavigationForPeerId(_ peerId: PeerId?, navigation: ChatControllerInteractionNavigateToPeer) -> ChatControllerInteractionNavigateToPeer {
     if case .default = navigation {
@@ -45,7 +46,7 @@ private func defaultNavigationForPeerId(_ peerId: PeerId?, navigation: ChatContr
     }
 }
 
-func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, urlContext: OpenURLContext, navigationController: NavigationController?, forceExternal: Bool, openPeer: @escaping (PeerId, ChatControllerInteractionNavigateToPeer) -> Void, sendFile: ((FileMediaReference) -> Void)?, sendSticker: ((FileMediaReference, UIView, CGRect) -> Bool)?, requestMessageActionUrlAuth: ((MessageActionUrlSubject) -> Void)? = nil, joinVoiceChat: ((PeerId, String?, CachedChannelData.ActiveCall) -> Void)?, present: @escaping (ViewController, Any?) -> Void, dismissInput: @escaping () -> Void, contentContext: Any?) {
+func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, urlContext: OpenURLContext, navigationController: NavigationController?, forceExternal: Bool, openPeer: @escaping (EnginePeer, ChatControllerInteractionNavigateToPeer) -> Void, sendFile: ((FileMediaReference) -> Void)?, sendSticker: ((FileMediaReference, UIView, CGRect) -> Bool)?, requestMessageActionUrlAuth: ((MessageActionUrlSubject) -> Void)? = nil, joinVoiceChat: ((PeerId, String?, CachedChannelData.ActiveCall) -> Void)?, present: @escaping (ViewController, Any?) -> Void, dismissInput: @escaping () -> Void, contentContext: Any?) {
     let updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?
     if case let .chat(_, maybeUpdatedPresentationData) = urlContext {
         updatedPresentationData = maybeUpdatedPresentationData
@@ -60,25 +61,25 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
             requestMessageActionUrlAuth?(.url(url))
             dismissInput()
             break
-        case let .peer(peerId, navigation):
-            if let peerId = peerId {
-                openPeer(peerId, defaultNavigationForPeerId(peerId, navigation: navigation))
+        case let .peer(peer, navigation):
+            if let peer = peer {
+                openPeer(EnginePeer(peer), defaultNavigationForPeerId(peer.id, navigation: navigation))
             } else {
                 present(textAlertController(context: context, updatedPresentationData: updatedPresentationData, title: nil, text: presentationData.strings.Resolve_ErrorNotFound, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil)
             }
         case .inaccessiblePeer:
             present(standardTextAlertController(theme: AlertControllerTheme(presentationData: presentationData), title: nil, text: presentationData.strings.Conversation_ErrorInaccessibleMessage, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil)
-        case let .botStart(peerId, payload):
-            openPeer(peerId, .withBotStartPayload(ChatControllerInitialBotStart(payload: payload, behavior: .interactive)))
+        case let .botStart(peer, payload):
+            openPeer(EnginePeer(peer), .withBotStartPayload(ChatControllerInitialBotStart(payload: payload, behavior: .interactive)))
         case let .groupBotStart(botPeerId, payload, adminRights):
-            let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyGroupsAndChannels, .onlyManageable, .excludeDisabled, .excludeRecent, .doNotSearchMessages], hasContactSelector: false, title: presentationData.strings.Bot_AddToChat_Title))
-            controller.peerSelected = { [weak controller] peer in
+            let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyGroupsAndChannels, .onlyManageable, .excludeDisabled, .excludeRecent, .doNotSearchMessages], hasContactSelector: false, title: presentationData.strings.Bot_AddToChat_Title, selectForumThreads: true))
+            controller.peerSelected = { [weak controller] peer, _ in
                 let peerId = peer.id
                 
                 let addMemberImpl = {
                     let presentationData = context.sharedContext.currentPresentationData.with { $0 }
                     let theme = AlertControllerTheme(presentationData: presentationData)
-                    let attributedTitle = NSAttributedString(string: presentationData.strings.Bot_AddToChat_Add_MemberAlertTitle, font: Font.medium(17.0), textColor: theme.primaryColor, paragraphAlignment: .center)
+                    let attributedTitle = NSAttributedString(string: presentationData.strings.Bot_AddToChat_Add_MemberAlertTitle, font: Font.semibold(presentationData.listsFontSize.baseDisplaySize), textColor: theme.primaryColor, paragraphAlignment: .center)
                   
                     var isGroup: Bool = false
                     var peerTitle: String = ""
@@ -94,8 +95,8 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                     
                     let text = isGroup ? presentationData.strings.Bot_AddToChat_Add_MemberAlertTextGroup(peerTitle).string : presentationData.strings.Bot_AddToChat_Add_MemberAlertTextChannel(peerTitle).string
                     
-                    let body = MarkdownAttributeSet(font: Font.regular(13.0), textColor: theme.primaryColor)
-                    let bold = MarkdownAttributeSet(font: Font.semibold(13.0), textColor: theme.primaryColor)
+                    let body = MarkdownAttributeSet(font: Font.regular(presentationData.listsFontSize.baseDisplaySize * 13.0 / 17.0), textColor: theme.primaryColor)
+                    let bold = MarkdownAttributeSet(font: Font.semibold(presentationData.listsFontSize.baseDisplaySize * 13.0 / 17.0), textColor: theme.primaryColor)
                     let attributedText = parseMarkdownIntoAttributedString(text, attributes: MarkdownAttributes(body: body, bold: bold, link: body, linkAttribute: { _ in return nil }), textAlignment: .center)
                     
                     let controller = richTextAlertController(context: context, title: attributedTitle, text: attributedText, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Bot_AddToChat_Add_MemberAlertAdd, action: {
@@ -114,16 +115,22 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                         } else {
                             let _ = (context.engine.messages.requestStartBotInGroup(botPeerId: botPeerId, groupPeerId: peerId, payload: payload)
                             |> deliverOnMainQueue).start(next: { result in
-                                if let navigationController = navigationController {
-                                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: peerId)))
-                                }
-                                switch result {
+                                let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
+                                |> deliverOnMainQueue).start(next: { peer in
+                                    guard let peer = peer else {
+                                        return
+                                    }
+                                    if let navigationController = navigationController {
+                                        context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(peer)))
+                                    }
+                                    switch result {
                                     case let .channelParticipant(participant):
                                         context.peerChannelMemberCategoriesContextsManager.externallyAdded(peerId: peerId, participant: participant)
                                     case .none:
                                         break
-                                }
-                                controller?.dismiss()
+                                    }
+                                    controller?.dismiss()
+                                })
                             }, error: { _ in
                                 
                             })
@@ -155,13 +162,39 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
             }
             dismissInput()
             navigationController?.pushViewController(controller)
-        case let .channelMessage(peerId, messageId, timecode):
-            openPeer(peerId, .chat(textInputState: nil, subject: .message(id: .id(messageId), highlight: true, timecode: timecode), peekData: nil))
+        case let .gameStart(botPeerId, game):
+            let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyManageable, .excludeDisabled, .excludeRecent, .doNotSearchMessages], hasContactSelector: false, title: presentationData.strings.Bot_AddToChat_Title, selectForumThreads: true))
+            controller.peerSelected = { [weak controller] peer, _ in
+                let _ = peer.id
+                let _ = botPeerId
+                let _ = game
+                let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+                let text: String
+                if let peer = peer as? TelegramUser {
+                    text = presentationData.strings.Target_ShareGameConfirmationPrivate(EnginePeer(peer).displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)).string
+                } else {
+                    text = presentationData.strings.Target_ShareGameConfirmationGroup(EnginePeer(peer).displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)).string
+                }
+                
+                let alertController = textAlertController(context: context, title: nil, text: text, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.RequestPeer_SelectionConfirmationSend, action: {
+                    controller?.dismiss()
+                }), TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {
+                })])
+                present(alertController, nil)
+            }
+            dismissInput()
+            navigationController?.pushViewController(controller)
+        case let .channelMessage(peer, messageId, timecode):
+            openPeer(EnginePeer(peer), .chat(textInputState: nil, subject: .message(id: .id(messageId), highlight: true, timecode: timecode), peekData: nil))
         case let .replyThreadMessage(replyThreadMessage, messageId):
             if let navigationController = navigationController {
                 let _ = ChatControllerImpl.openMessageReplies(context: context, navigationController: navigationController, present: { c, a in
                     present(c, a)
                 }, messageId: replyThreadMessage.messageId, isChannelPost: replyThreadMessage.isChannelPost, atMessage: messageId, displayModalProgress: true).start()
+            }
+        case let .replyThread(messageId):
+            if let navigationController = navigationController {
+                let _ = context.sharedContext.navigateToForumThread(context: context, peerId: messageId.peerId, threadId: Int64(messageId.id), messageId: nil, navigationController: navigationController, activateInput: nil, keepStack: .always).start()
             }
         case let .stickerPack(name, _):
             dismissInput()
@@ -193,11 +226,11 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
             })
                 present(controller, nil)
         case let .instantView(webpage, anchor):
-            navigationController?.pushViewController(InstantPageController(context: context, webPage: webpage, sourcePeerType: .channel, anchor: anchor))
+            navigationController?.pushViewController(InstantPageController(context: context, webPage: webpage, sourceLocation: InstantPageSourceLocation(userLocation: .other, peerType: .channel), anchor: anchor))
         case let .join(link):
             dismissInput()
-            present(JoinLinkPreviewController(context: context, link: link, navigateToPeer: { peerId, peekData in
-                openPeer(peerId, .chat(textInputState: nil, subject: nil, peekData: peekData))
+            present(JoinLinkPreviewController(context: context, link: link, navigateToPeer: { peer, peekData in
+                openPeer(peer, .chat(textInputState: nil, subject: nil, peekData: peekData))
             }, parentNavigationController: navigationController), nil)
         case let .localization(identifier):
             dismissInput()
@@ -213,7 +246,9 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
             dismissInput()
             present(ProxyServerActionSheetController(context: context, server: server), nil)
         case let .confirmationCode(code):
-            if let topController = navigationController?.topViewController as? ChangePhoneNumberCodeController {
+            if let topController = navigationController?.topViewController as? AuthorizationSequenceCodeEntryController {
+                topController.applyConfirmationCode(code)
+            } else if let topController = navigationController?.topViewController as? ChangePhoneNumberCodeController {
                 topController.applyCode(code)
             } else {
                 var found = false
@@ -309,8 +344,8 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                     present(shareController, nil)
                     context.sharedContext.applicationBindings.dismissNativeController()
                 } else {
-                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyWriteable, .excludeDisabled]))
-                    controller.peerSelected = { [weak controller] peer in
+                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyWriteable, .excludeDisabled], selectForumThreads: true))
+                    controller.peerSelected = { [weak controller] peer, _ in
                         let peerId = peer.id
                         
                         if let strongController = controller {
@@ -363,7 +398,7 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                         subscriber.putNext((nil, settings, themeInfo))
                         subscriber.putCompletion()
                     } else if let resource = themeInfo.file?.resource {
-                        disposables.add(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, reference: .standalone(resource: resource)).start())
+                        disposables.add(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: .standalone(resource: resource)).start())
                         
                         let maybeFetched = context.sharedContext.accountManager.mediaBox.resourceData(resource, option: .complete(waitUntilFetchStatus: false), attemptSynchronously: false)
                         |> mapToSignal { maybeData -> Signal<Data?, NoError> in
@@ -449,47 +484,68 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
         case let .settings(section):
             dismissInput()
             switch section {
-                case .theme:
-                    if let navigationController = navigationController {
-                        let controller = themeSettingsController(context: context)
+            case .theme:
+                if let navigationController = navigationController {
+                    let controller = themeSettingsController(context: context)
+                    controller.navigationPresentation = .modal
+                    
+                    var controllers = navigationController.viewControllers
+                    controllers = controllers.filter { !($0 is ThemeSettingsController) }
+                    controllers.append(controller)
+                    
+                    navigationController.setViewControllers(controllers, animated: true)
+                }
+            case .devices:
+                if let navigationController = navigationController {
+                    let activeSessions = deferred { () -> Signal<(ActiveSessionsContext, Int, WebSessionsContext), NoError> in
+                        let activeSessionsContext = context.engine.privacy.activeSessions()
+                        let webSessionsContext = context.engine.privacy.webSessions()
+                        let otherSessionCount = activeSessionsContext.state
+                        |> map { state -> Int in
+                            return state.sessions.filter({ !$0.isCurrent }).count
+                        }
+                        |> distinctUntilChanged
+                        
+                        return otherSessionCount
+                        |> map { value in
+                            return (activeSessionsContext, value, webSessionsContext)
+                        }
+                    }
+                    
+                    let _ = (activeSessions
+                    |> take(1)
+                    |> deliverOnMainQueue).start(next: { activeSessionsContext, count, webSessionsContext in
+                        let controller = recentSessionsController(context: context, activeSessionsContext: activeSessionsContext, webSessionsContext: webSessionsContext, websitesOnly: false)
                         controller.navigationPresentation = .modal
                         
                         var controllers = navigationController.viewControllers
-                        controllers = controllers.filter { !($0 is ThemeSettingsController) }
+                        controllers = controllers.filter { !($0 is RecentSessionsController) }
+                        controllers.append(controller)
+                        
+                        navigationController.setViewControllers(controllers, animated: true)
+                    })
+                }
+            case .autoremoveMessages:
+                let _ = (context.engine.privacy.requestAccountPrivacySettings()
+                |> take(1)
+                |> deliverOnMainQueue).start(next: { settings in
+                    navigationController?.pushViewController(globalAutoremoveScreen(context: context, initialValue: settings.messageAutoremoveTimeout ?? 0, updated: { _ in }), animated: true)
+                })
+            case .twoStepAuth:
+                break
+            case .enableLog:
+                if let navigationController = navigationController {
+                    let _ = updateLoggingSettings(accountManager: context.sharedContext.accountManager, {
+                        $0.withUpdatedLogToFile(true)
+                    }).start()
+                    
+                    if let controller = context.sharedContext.makeDebugSettingsController(context: context) {
+                        var controllers = navigationController.viewControllers
                         controllers.append(controller)
                         
                         navigationController.setViewControllers(controllers, animated: true)
                     }
-                case .devices:
-                    if let navigationController = navigationController {
-                        let activeSessions = deferred { () -> Signal<(ActiveSessionsContext, Int, WebSessionsContext), NoError> in
-                            let activeSessionsContext = context.engine.privacy.activeSessions()
-                            let webSessionsContext = context.engine.privacy.webSessions()
-                            let otherSessionCount = activeSessionsContext.state
-                            |> map { state -> Int in
-                                return state.sessions.filter({ !$0.isCurrent }).count
-                            }
-                            |> distinctUntilChanged
-                            
-                            return otherSessionCount
-                            |> map { value in
-                                return (activeSessionsContext, value, webSessionsContext)
-                            }
-                        }
-                        
-                        let _ = (activeSessions
-                        |> take(1)
-                        |> deliverOnMainQueue).start(next: { activeSessionsContext, count, webSessionsContext in
-                            let controller = recentSessionsController(context: context, activeSessionsContext: activeSessionsContext, webSessionsContext: webSessionsContext, websitesOnly: false)
-                            controller.navigationPresentation = .modal
-                            
-                            var controllers = navigationController.viewControllers
-                            controllers = controllers.filter { !($0 is RecentSessionsController) }
-                            controllers.append(controller)
-                            
-                            navigationController.setViewControllers(controllers, animated: true)
-                        })
-                    }
+                }
             }
         case let .premiumOffer(reference):
             dismissInput()
@@ -504,17 +560,23 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                 }
             })
         case let .joinVoiceChat(peerId, invite):
-            dismissInput()
-            if let navigationController = navigationController {
-                context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: peerId), completion: { chatController in
-                    guard let chatController = chatController as? ChatControllerImpl else {
-                        return
-                    }
-                    navigationController.currentWindow?.present(VoiceChatJoinScreen(context: context, peerId: peerId, invite: invite, join: { [weak chatController] call in
-                        chatController?.joinGroupCall(peerId: peerId, invite: invite, activeCall: EngineGroupCallDescription(call))
-                    }), on: .root, blockInteraction: false, completion: {})
-                }))
-            }
+            let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
+            |> deliverOnMainQueue).start(next: { peer in
+                guard let peer = peer else {
+                    return
+                }
+                dismissInput()
+                if let navigationController = navigationController {
+                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(peer), completion: { chatController in
+                        guard let chatController = chatController as? ChatControllerImpl else {
+                            return
+                        }
+                        navigationController.currentWindow?.present(VoiceChatJoinScreen(context: context, peerId: peerId, invite: invite, join: { [weak chatController] call in
+                            chatController?.joinGroupCall(peerId: peerId, invite: invite, activeCall: EngineGroupCallDescription(call))
+                        }), on: .root, blockInteraction: false, completion: {})
+                    }))
+                }
+            })
         case .importStickers:
             dismissInput()
             if let navigationController = navigationController, let data = UIPasteboard.general.data(forPasteboardType: "org.telegram.third-party.stickerset"), let stickerPack = ImportStickerPack(data: data), !stickerPack.stickers.isEmpty {
@@ -577,15 +639,24 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                         }
                         
                         if let navigationController = navigationController {
-                            let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, updatedPresentationData: updatedPresentationData, filter: filters, hasChatListSelector: true, hasContactSelector: false, title: presentationData.strings.WebApp_SelectChat))
-                            controller.peerSelected = { peer in
-                                let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: peer.id), attachBotStart: ChatControllerInitialAttachBotStart(botId: bot.peer.id, payload: payload, justInstalled: false), useExisting: true))
+                            let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, updatedPresentationData: updatedPresentationData, filter: filters, hasChatListSelector: true, hasContactSelector: false, title: presentationData.strings.WebApp_SelectChat, selectForumThreads: true))
+                            controller.peerSelected = { [weak navigationController] peer, _ in
+                                guard let navigationController else {
+                                    return
+                                }
+                                let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(EnginePeer(peer)), attachBotStart: ChatControllerInitialAttachBotStart(botId: bot.peer.id, payload: payload, justInstalled: false), keepStack: .never, useExisting: true))
                             }
                             navigationController.pushViewController(controller)
                         }
                     } else {
-                        if let navigationController = navigationController, case let .chat(chatPeerId, _) = urlContext {
-                            let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: chatPeerId), attachBotStart: ChatControllerInitialAttachBotStart(botId: peerId, payload: payload, justInstalled: false), useExisting: true))
+                        if case let .chat(chatPeerId, _) = urlContext {
+                            let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: chatPeerId))
+                            |> deliverOnMainQueue).start(next: { chatPeer in
+                                guard let navigationController = navigationController, let chatPeer else {
+                                    return
+                                }
+                                let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(chatPeer), attachBotStart: ChatControllerInitialAttachBotStart(botId: peerId, payload: payload, justInstalled: false), keepStack: .never, useExisting: true))
+                            })
                         } else {
                             presentError(presentationData.strings.WebApp_AddToAttachmentAlreadyAddedError)
                         }
@@ -596,8 +667,8 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                         let choose = filterChooseTypes(choose, peerTypes: bot.peerTypes)
                         
                         let botPeer = EnginePeer(bot.peer)
-                        let controller = addWebAppToAttachmentController(context: context, peerName: botPeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder), icons: bot.icons, completion: {
-                            let _ = (context.engine.messages.addBotToAttachMenu(botId: peerId)
+                        let controller = addWebAppToAttachmentController(context: context, peerName: botPeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder), icons: bot.icons, requestWriteAccess: bot.flags.contains(.requiresWriteAccess), completion: { allowWrite in
+                            let _ = (context.engine.messages.addBotToAttachMenu(botId: peerId, allowWrite: allowWrite)
                             |> deliverOnMainQueue).start(error: { _ in
                                 presentError(presentationData.strings.WebApp_AddToAttachmentUnavailableError)
                             }, completed: {
@@ -620,15 +691,25 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
                                     }
                                     
                                     if let navigationController = navigationController {
-                                        let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, updatedPresentationData: updatedPresentationData, filter: filters, hasChatListSelector: true, hasContactSelector: false, title: presentationData.strings.WebApp_SelectChat))
-                                        controller.peerSelected = { peer in
-                                            let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: peer.id), attachBotStart: ChatControllerInitialAttachBotStart(botId: botPeer.id, payload: payload, justInstalled: true), useExisting: true))
+                                        let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, updatedPresentationData: updatedPresentationData, filter: filters, hasChatListSelector: true, hasContactSelector: false, title: presentationData.strings.WebApp_SelectChat, selectForumThreads: true))
+                                        controller.peerSelected = { [weak navigationController] peer, _ in
+                                            guard let navigationController else {
+                                                return
+                                            }
+                                            let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(EnginePeer(peer)), attachBotStart: ChatControllerInitialAttachBotStart(botId: botPeer.id, payload: payload, justInstalled: true), useExisting: true))
                                         }
                                         navigationController.pushViewController(controller)
                                     }
                                 } else {
-                                    if let navigationController = navigationController, case let .chat(chatPeerId, _) = urlContext {
-                                        let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: chatPeerId), attachBotStart: ChatControllerInitialAttachBotStart(botId: botPeer.id, payload: payload, justInstalled: true), useExisting: true))
+                                    if case let .chat(chatPeerId, _) = urlContext {
+                                        let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: chatPeerId))
+                                        |> deliverOnMainQueue).start(next: { chatPeer in
+                                            guard let navigationController = navigationController, let chatPeer else {
+                                                return
+                                            }
+                                            
+                                            let _ = context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(chatPeer), attachBotStart: ChatControllerInitialAttachBotStart(botId: botPeer.id, payload: payload, justInstalled: true), useExisting: true))
+                                        })
                                     }
                                 }
                             })
@@ -641,28 +722,33 @@ func openResolvedUrlImpl(_ resolvedUrl: ResolvedUrl, context: AccountContext, ur
             })
         case let .invoice(slug, invoice):
             dismissInput()
-            if let navigationController = navigationController {
-                let inputData = Promise<BotCheckoutController.InputData?>()
-                inputData.set(BotCheckoutController.InputData.fetch(context: context, source: .slug(slug))
-                |> map(Optional.init)
-                |> `catch` { _ -> Signal<BotCheckoutController.InputData?, NoError> in
-                    return .single(nil)
-                })
-                let checkoutController = BotCheckoutController(context: context, invoice: invoice, source: .slug(slug), inputData: inputData, completed: { currencyValue, receiptMessageId in
-                    /*strongSelf.present(UndoOverlayController(presentationData: strongSelf.presentationData, content: .paymentSent(currencyValue: currencyValue, itemTitle: invoice.title), elevatedLayout: false, action: { action in
-                        guard let strongSelf = self, let receiptMessageId = receiptMessageId else {
-                            return false
-                        }
-
-                        if case .info = action {
-                            strongSelf.present(BotReceiptController(context: strongSelf.context, messageId: receiptMessageId), in: .window(.root), with: ViewControllerPresentationArguments(presentationAnimation: .modalSheet))
-                            return true
-                        }
-                        return false
-                    }), in: .current)*/
-                })
-                checkoutController.navigationPresentation = .modal
-                navigationController.pushViewController(checkoutController)
+        
+            if let invoice {
+                if let navigationController = navigationController {
+                    let inputData = Promise<BotCheckoutController.InputData?>()
+                    inputData.set(BotCheckoutController.InputData.fetch(context: context, source: .slug(slug))
+                                  |> map(Optional.init)
+                                  |> `catch` { _ -> Signal<BotCheckoutController.InputData?, NoError> in
+                        return .single(nil)
+                    })
+                    let checkoutController = BotCheckoutController(context: context, invoice: invoice, source: .slug(slug), inputData: inputData, completed: { currencyValue, receiptMessageId in
+                        /*strongSelf.present(UndoOverlayController(presentationData: strongSelf.presentationData, content: .paymentSent(currencyValue: currencyValue, itemTitle: invoice.title), elevatedLayout: false, action: { action in
+                         guard let strongSelf = self, let receiptMessageId = receiptMessageId else {
+                         return false
+                         }
+                         
+                         if case .info = action {
+                         strongSelf.present(BotReceiptController(context: strongSelf.context, messageId: receiptMessageId), in: .window(.root), with: ViewControllerPresentationArguments(presentationAnimation: .modalSheet))
+                         return true
+                         }
+                         return false
+                         }), in: .current)*/
+                    })
+                    checkoutController.navigationPresentation = .modal
+                    navigationController.pushViewController(checkoutController)
+                }
+            } else {
+                present(textAlertController(context: context, updatedPresentationData: updatedPresentationData, title: nil, text: presentationData.strings.Chat_ErrorInvoiceNotFound, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil)
             }
     }
 }

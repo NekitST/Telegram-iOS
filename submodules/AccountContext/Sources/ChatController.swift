@@ -15,7 +15,21 @@ public final class ChatMessageItemAssociatedData: Equatable {
         case known(EnginePeer.Id?)
     }
     
+    public struct DisplayTranscribeButton: Equatable {
+        public let canBeDisplayed: Bool
+        public let displayForNotConsumed: Bool
+        
+        public init(
+            canBeDisplayed: Bool,
+            displayForNotConsumed: Bool
+        ) {
+            self.canBeDisplayed = canBeDisplayed
+            self.displayForNotConsumed = displayForNotConsumed
+        }
+    }
+    
     public let automaticDownloadPeerType: MediaAutoDownloadPeerType
+    public let automaticDownloadPeerId: EnginePeer.Id?
     public let automaticDownloadNetworkType: MediaAutoDownloadNetworkType
     public let isRecentActions: Bool
     public let subject: ChatControllerSubject?
@@ -30,10 +44,15 @@ public final class ChatMessageItemAssociatedData: Equatable {
     public let defaultReaction: MessageReaction.Reaction?
     public let isPremium: Bool
     public let forceInlineReactions: Bool
+    public let alwaysDisplayTranscribeButton: DisplayTranscribeButton
     public let accountPeer: EnginePeer?
+    public let topicAuthorId: EnginePeer.Id?
+    public let hasBots: Bool
+    public let translateToLanguage: String?
     
-    public init(automaticDownloadPeerType: MediaAutoDownloadPeerType, automaticDownloadNetworkType: MediaAutoDownloadNetworkType, isRecentActions: Bool = false, subject: ChatControllerSubject? = nil, contactsPeerIds: Set<EnginePeer.Id> = Set(), channelDiscussionGroup: ChannelDiscussionGroupStatus = .unknown, animatedEmojiStickers: [String: [StickerPackItem]] = [:], additionalAnimatedEmojiStickers: [String: [Int: StickerPackItem]] = [:], forcedResourceStatus: FileMediaResourceStatus? = nil, currentlyPlayingMessageId: EngineMessage.Index? = nil, isCopyProtectionEnabled: Bool = false, availableReactions: AvailableReactions?, defaultReaction: MessageReaction.Reaction?, isPremium: Bool, accountPeer: EnginePeer?, forceInlineReactions: Bool = false) {
+    public init(automaticDownloadPeerType: MediaAutoDownloadPeerType, automaticDownloadPeerId: EnginePeer.Id?, automaticDownloadNetworkType: MediaAutoDownloadNetworkType, isRecentActions: Bool = false, subject: ChatControllerSubject? = nil, contactsPeerIds: Set<EnginePeer.Id> = Set(), channelDiscussionGroup: ChannelDiscussionGroupStatus = .unknown, animatedEmojiStickers: [String: [StickerPackItem]] = [:], additionalAnimatedEmojiStickers: [String: [Int: StickerPackItem]] = [:], forcedResourceStatus: FileMediaResourceStatus? = nil, currentlyPlayingMessageId: EngineMessage.Index? = nil, isCopyProtectionEnabled: Bool = false, availableReactions: AvailableReactions?, defaultReaction: MessageReaction.Reaction?, isPremium: Bool, accountPeer: EnginePeer?, forceInlineReactions: Bool = false, alwaysDisplayTranscribeButton: DisplayTranscribeButton = DisplayTranscribeButton(canBeDisplayed: false, displayForNotConsumed: false), topicAuthorId: EnginePeer.Id? = nil, hasBots: Bool = false, translateToLanguage: String? = nil) {
         self.automaticDownloadPeerType = automaticDownloadPeerType
+        self.automaticDownloadPeerId = automaticDownloadPeerId
         self.automaticDownloadNetworkType = automaticDownloadNetworkType
         self.isRecentActions = isRecentActions
         self.subject = subject
@@ -49,10 +68,17 @@ public final class ChatMessageItemAssociatedData: Equatable {
         self.isPremium = isPremium
         self.accountPeer = accountPeer
         self.forceInlineReactions = forceInlineReactions
+        self.topicAuthorId = topicAuthorId
+        self.alwaysDisplayTranscribeButton = alwaysDisplayTranscribeButton
+        self.hasBots = hasBots
+        self.translateToLanguage = translateToLanguage
     }
     
     public static func == (lhs: ChatMessageItemAssociatedData, rhs: ChatMessageItemAssociatedData) -> Bool {
         if lhs.automaticDownloadPeerType != rhs.automaticDownloadPeerType {
+            return false
+        }
+        if lhs.automaticDownloadPeerId != rhs.automaticDownloadPeerId {
             return false
         }
         if lhs.automaticDownloadNetworkType != rhs.automaticDownloadNetworkType {
@@ -95,6 +121,18 @@ public final class ChatMessageItemAssociatedData: Equatable {
             return false
         }
         if lhs.forceInlineReactions != rhs.forceInlineReactions {
+            return false
+        }
+        if lhs.topicAuthorId != rhs.topicAuthorId {
+            return false
+        }
+        if lhs.alwaysDisplayTranscribeButton != rhs.alwaysDisplayTranscribeButton {
+            return false
+        }
+        if lhs.hasBots != rhs.hasBots {
+            return false
+        }
+        if lhs.translateToLanguage != rhs.translateToLanguage {
             return false
         }
         return true
@@ -170,12 +208,25 @@ public struct ChatControllerInitialAttachBotStart {
     }
 }
 
+public struct ChatControllerInitialBotAppStart {
+    public let botApp: BotApp
+    public let payload: String?
+    public let justInstalled: Bool
+    
+    public init(botApp: BotApp, payload: String?, justInstalled: Bool) {
+        self.botApp = botApp
+        self.payload = payload
+        self.justInstalled = justInstalled
+    }
+}
+
 public enum ChatControllerInteractionNavigateToPeer {
     case `default`
     case chat(textInputState: ChatTextInputState?, subject: ChatControllerSubject?, peekData: ChatPeekTimeout?)
     case info
     case withBotStartPayload(ChatControllerInitialBotStart)
     case withAttachBot(ChatControllerInitialAttachBotStart)
+    case withBotApp(ChatControllerInitialBotAppStart)
 }
 
 public struct ChatInterfaceForwardOptionsState: Codable, Equatable {
@@ -438,7 +489,7 @@ public enum ChatControllerSubject: Equatable {
     case message(id: MessageSubject, highlight: Bool, timecode: Double?)
     case scheduledMessages
     case pinnedMessages(id: EngineMessage.Id?)
-    case forwardedMessages(ids: [EngineMessage.Id], options: Signal<ForwardOptions, NoError>)
+    case forwardedMessages(peerIds: [EnginePeer.Id], ids: [EngineMessage.Id], options: Signal<ForwardOptions, NoError>)
     
     public static func ==(lhs: ChatControllerSubject, rhs: ChatControllerSubject) -> Bool {
         switch lhs {
@@ -460,8 +511,8 @@ public enum ChatControllerSubject: Equatable {
             } else {
                 return false
             }
-        case let .forwardedMessages(lhsIds, _):
-            if case let .forwardedMessages(rhsIds, _) = rhs, lhsIds == rhsIds {
+        case let .forwardedMessages(lhsPeerIds, lhsIds, _):
+            if case let .forwardedMessages(rhsPeerIds, rhsIds, _) = rhs, lhsPeerIds == rhsPeerIds, lhsIds == rhsIds {
                 return true
             } else {
                 return false
@@ -557,6 +608,14 @@ public enum ChatPresentationInputQueryResult: Equatable {
 
 public let ChatControllerCount = Atomic<Int32>(value: 0)
 
+public final class PeerInfoNavigationSourceTag {
+    public let peerId: EnginePeer.Id
+    
+    public init(peerId: EnginePeer.Id) {
+        self.peerId = peerId
+    }
+}
+
 public protocol PeerInfoScreen: ViewController {
     
 }
@@ -572,9 +631,14 @@ public protocol ChatController: ViewController {
     func beginMessageSearch(_ query: String)
     func displayPromoAnnouncement(text: String)
     
+    func updatePushedTransition(_ fraction: CGFloat, transition: ContainedViewLayoutTransition)
+    
     func hintPlayNextOutgoingGift()
     
     var isSendButtonVisible: Bool { get }
+    
+    var isSelectingMessagesUpdated: ((Bool) -> Void)? { get set }
+    func cancelSelectingMessages()
 }
 
 public protocol ChatMessagePreviewItemNode: AnyObject {
@@ -603,4 +667,5 @@ public enum FileMediaResourceMediaStatus: Equatable {
 
 public protocol ChatMessageItemNodeProtocol: ListViewItemNode {
     func targetReactionView(value: MessageReaction.Reaction) -> UIView?
+    func contentFrame() -> CGRect
 }

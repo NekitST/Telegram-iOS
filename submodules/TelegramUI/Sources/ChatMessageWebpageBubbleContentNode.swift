@@ -63,23 +63,8 @@ final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContentNode {
         }
         self.contentNode.activateAction = { [weak self] in
             if let strongSelf = self, let item = strongSelf.item {
-                if let adAttribute = item.message.adAttribute {
-                    switch adAttribute.target {
-                    case let .peer(id, messageId, startParam):
-                        let navigationData: ChatControllerInteractionNavigateToPeer
-                        if let bot = item.message.author as? TelegramUser, bot.botInfo != nil, let startParam = startParam {
-                            navigationData = .withBotStartPayload(ChatControllerInitialBotStart(payload: startParam, behavior: .interactive))
-                        } else {
-                            var subject: ChatControllerSubject?
-                            if let messageId = messageId {
-                                subject = .message(id: .id(messageId), highlight: true, timecode: nil)
-                            }
-                            navigationData = .chat(textInputState: nil, subject: subject, peekData: nil)
-                        }
-                        item.controllerInteraction.openPeer(id, navigationData, nil, false, nil)
-                    case let .join(_, joinHash):
-                        item.controllerInteraction.openJoinLink(joinHash)
-                    }
+                if let _ = item.message.adAttribute {
+                    item.controllerInteraction.activateAdAction(item.message.id)
                 } else {
                     var webPageContent: TelegramMediaWebpageLoadedContent?
                     for media in item.message.media {
@@ -98,7 +83,7 @@ final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContentNode {
         }
         self.contentNode.requestUpdateLayout = { [weak self] in
             if let strongSelf = self, let item = strongSelf.item {
-                let _ = item.controllerInteraction.requestMessageUpdate(item.message.id)
+                let _ = item.controllerInteraction.requestMessageUpdate(item.message.id, false)
             }
         }
     }
@@ -107,10 +92,10 @@ final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContentNode {
         fatalError("init(coder:) has not been implemented")
     }
     
-    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
+    override func asyncLayoutContent() -> (_ item: ChatMessageBubbleContentItem, _ layoutConstants: ChatMessageItemLayoutConstants, _ preparePosition: ChatMessageBubblePreparePosition, _ messageSelection: Bool?, _ constrainedSize: CGSize, _ avatarInset: CGFloat) -> (ChatMessageBubbleContentProperties, CGSize?, CGFloat, (CGSize, ChatMessageBubbleContentPosition) -> (CGFloat, (CGFloat) -> (CGSize, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void))) {
         let contentNodeLayout = self.contentNode.asyncLayout()
         
-        return { item, layoutConstants, preparePosition, _, constrainedSize in
+        return { item, layoutConstants, preparePosition, _, constrainedSize, _ in
             var webPage: TelegramMediaWebpage?
             var webPageContent: TelegramMediaWebpageLoadedContent?
             for media in item.message.media {
@@ -164,7 +149,7 @@ final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContentNode {
 
                 var automaticPlayback = false
                 
-                if let file = webpage.file, (file.isAnimated && item.controllerInteraction.automaticMediaDownloadSettings.autoplayGifs) || (!file.isAnimated && item.controllerInteraction.automaticMediaDownloadSettings.autoplayVideos) {
+                if let file = webpage.file, (file.isAnimated && item.context.sharedContext.energyUsageSettings.autoplayGif) || (!file.isAnimated && item.context.sharedContext.energyUsageSettings.autoplayVideo) {
                     var automaticDownload: InteractiveMediaNodeAutodownloadMode = .none
                     if shouldDownloadMediaAutomatically(settings: item.controllerInteraction.automaticMediaDownloadSettings, peerType: item.associatedData.automaticDownloadPeerType, networkType: item.associatedData.automaticDownloadNetworkType, authorPeerId: item.message.author?.id, contactsPeerIds: item.associatedData.contactsPeerIds, media: file) {
                         automaticDownload = .full
@@ -333,6 +318,9 @@ final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContentNode {
                             title = item.presentationData.strings.Conversation_Theme
                             text = nil
                             actionTitle = item.presentationData.strings.Conversation_ViewTheme
+                        case "telegram_botapp":
+                            title = item.presentationData.strings.Conversation_BotApp
+                            actionTitle = item.presentationData.strings.Conversation_OpenBotApp
                         default:
                             break
                     }

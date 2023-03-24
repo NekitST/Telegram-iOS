@@ -121,11 +121,17 @@ open class TabBarControllerImpl: ViewController, TabBarController {
     
     public var currentController: ViewController?
     
+    override public var transitionNavigationBar: NavigationBar? {
+        return self.currentController?.navigationBar
+    }
+    
     private let pendingControllerDisposable = MetaDisposable()
     
+    private var navigationBarPresentationData: NavigationBarPresentationData
     private var theme: TabBarControllerTheme
     
     public init(navigationBarPresentationData: NavigationBarPresentationData, theme: TabBarControllerTheme) {
+        self.navigationBarPresentationData = navigationBarPresentationData
         self.theme = theme
         
         super.init(navigationBarPresentationData: nil)
@@ -151,8 +157,9 @@ open class TabBarControllerImpl: ViewController, TabBarController {
     public func updateTheme(navigationBarPresentationData: NavigationBarPresentationData, theme: TabBarControllerTheme) {
         if self.theme !== theme {
             self.theme = theme
+            self.navigationBarPresentationData = navigationBarPresentationData
             if self.isNodeLoaded {
-                self.tabBarControllerNode.updateTheme(theme)
+                self.tabBarControllerNode.updateTheme(theme, navigationBarPresentationData: navigationBarPresentationData)
             }
         }
     }
@@ -190,7 +197,7 @@ open class TabBarControllerImpl: ViewController, TabBarController {
     }
     
     override open func loadDisplayNode() {
-        self.displayNode = TabBarControllerNode(theme: self.theme, itemSelected: { [weak self] index, longTap, itemNodes in
+        self.displayNode = TabBarControllerNode(theme: self.theme, navigationBarPresentationData: self.navigationBarPresentationData, itemSelected: { [weak self] index, longTap, itemNodes in
             if let strongSelf = self {
                 if longTap, let controller = strongSelf.controllers[index] as? TabBarContainedController {
                     controller.presentTabBarPreviewingController(sourceNodes: itemNodes)

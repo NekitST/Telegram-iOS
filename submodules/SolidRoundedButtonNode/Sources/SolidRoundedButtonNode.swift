@@ -69,6 +69,95 @@ public enum SolidRoundedButtonProgressType {
     case embedded
 }
 
+private final class BadgeNode: ASDisplayNode {
+    private var fillColor: UIColor
+    private var strokeColor: UIColor
+    private var textColor: UIColor
+    
+    private let textNode: ImmediateTextNode
+    private let backgroundNode: ASImageNode
+    
+    private let font: UIFont = Font.with(size: 15.0, design: .round, weight: .bold)
+    
+    var text: String = "" {
+        didSet {
+            self.textNode.attributedText = NSAttributedString(string: self.text, font: self.font, textColor: self.textColor)
+            self.invalidateCalculatedLayout()
+        }
+    }
+    
+    init(fillColor: UIColor, strokeColor: UIColor, textColor: UIColor) {
+        self.fillColor = fillColor
+        self.strokeColor = strokeColor
+        self.textColor = textColor
+        
+        self.textNode = ImmediateTextNode()
+        self.textNode.isUserInteractionEnabled = false
+        self.textNode.displaysAsynchronously = false
+        
+        self.backgroundNode = ASImageNode()
+        self.backgroundNode.isLayerBacked = true
+        self.backgroundNode.displayWithoutProcessing = true
+        self.backgroundNode.displaysAsynchronously = false
+        self.backgroundNode.image = generateStretchableFilledCircleImage(diameter: 18.0, color: fillColor, strokeColor: nil, strokeWidth: 1.0)
+        
+        super.init()
+        
+        self.addSubnode(self.backgroundNode)
+        self.addSubnode(self.textNode)
+        
+        self.isUserInteractionEnabled = false
+    }
+    
+    func updateTheme(fillColor: UIColor, strokeColor: UIColor, textColor: UIColor) {
+        self.fillColor = fillColor
+        self.strokeColor = strokeColor
+        self.textColor = textColor
+        self.backgroundNode.image = generateStretchableFilledCircleImage(diameter: 18.0, color: fillColor, strokeColor: strokeColor, strokeWidth: 1.0)
+        self.textNode.attributedText = NSAttributedString(string: self.text, font: self.font, textColor: self.textColor)
+    }
+    
+    func animateBump(incremented: Bool) {
+        if incremented {
+            let firstTransition = ContainedViewLayoutTransition.animated(duration: 0.1, curve: .easeInOut)
+            firstTransition.updateTransformScale(layer: self.backgroundNode.layer, scale: 1.2)
+            firstTransition.updateTransformScale(layer: self.textNode.layer, scale: 1.2, completion: { finished in
+                if finished {
+                    let secondTransition = ContainedViewLayoutTransition.animated(duration: 0.1, curve: .easeInOut)
+                    secondTransition.updateTransformScale(layer: self.backgroundNode.layer, scale: 1.0)
+                    secondTransition.updateTransformScale(layer: self.textNode.layer, scale: 1.0)
+                }
+            })
+        } else {
+            let firstTransition = ContainedViewLayoutTransition.animated(duration: 0.1, curve: .easeInOut)
+            firstTransition.updateTransformScale(layer: self.backgroundNode.layer, scale: 0.8)
+            firstTransition.updateTransformScale(layer: self.textNode.layer, scale: 0.8, completion: { finished in
+                if finished {
+                    let secondTransition = ContainedViewLayoutTransition.animated(duration: 0.1, curve: .easeInOut)
+                    secondTransition.updateTransformScale(layer: self.backgroundNode.layer, scale: 1.0)
+                    secondTransition.updateTransformScale(layer: self.textNode.layer, scale: 1.0)
+                }
+            })
+        }
+    }
+    
+    func animateOut() {
+        let timingFunction = CAMediaTimingFunctionName.easeInEaseOut.rawValue
+        self.backgroundNode.layer.animateScale(from: 1.0, to: 0.1, duration: 0.3, delay: 0.0, timingFunction: timingFunction, removeOnCompletion: true, completion: nil)
+        self.textNode.layer.animateScale(from: 1.0, to: 0.1, duration: 0.3, delay: 0.0, timingFunction: timingFunction, removeOnCompletion: true, completion: nil)
+    }
+    
+    func update(_ constrainedSize: CGSize) -> CGSize {
+        let badgeSize = self.textNode.updateLayout(constrainedSize)
+        let backgroundSize = CGSize(width: max(18.0, badgeSize.width + 8.0), height: 18.0)
+        let backgroundFrame = CGRect(origin: CGPoint(), size: backgroundSize)
+        self.backgroundNode.frame = backgroundFrame
+        self.textNode.frame = CGRect(origin: CGPoint(x: floorToScreenPixels(backgroundFrame.midX - badgeSize.width / 2.0), y: floorToScreenPixels((backgroundFrame.size.height - badgeSize.height) / 2.0) - UIScreenPixel), size: badgeSize)
+        
+        return backgroundSize
+    }
+}
+
 public final class SolidRoundedButtonNode: ASDisplayNode {
     private var theme: SolidRoundedButtonTheme
     private var font: SolidRoundedButtonFont
@@ -89,6 +178,7 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
     private let iconNode: ASImageNode
     private var animationNode: SimpleAnimationNode?
     private var progressNode: ASImageNode?
+    private var badgeNode: BadgeNode?
     
     private let buttonHeight: CGFloat
     private let buttonCornerRadius: CGFloat
@@ -101,11 +191,13 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
             if self.isEnabled != oldValue {
                 self.updateColors(animated: true)
             }
+            self.updateAccessibilityLabels()
         }
     }
     
     public var title: String? {
         didSet {
+            self.updateAccessibilityLabels()
             if let width = self.validLayout {
                 _ = self.updateLayout(width: width, transition: .immediate)
             }
@@ -114,8 +206,18 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
     
     public var subtitle: String? {
         didSet {
+            self.updateAccessibilityLabels()
             if let width = self.validLayout {
                 _ = self.updateLayout(width: width, previousSubtitle: oldValue, transition: .immediate)
+            }
+        }
+    }
+    
+    public var badge: String? {
+        didSet {
+            self.updateAccessibilityLabels()
+            if let width = self.validLayout {
+                _ = self.updateLayout(width: width, transition: .immediate)
             }
         }
     }
@@ -123,6 +225,15 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
     public var icon: UIImage? {
         didSet {
             self.iconNode.image = generateTintedImage(image: self.icon, color: self.theme.foregroundColor)
+        }
+    }
+    
+    private func updateAccessibilityLabels() {
+        self.accessibilityLabel = (self.title ?? "") + " " + (self.subtitle ?? "")
+        if !self.isEnabled {
+            self.accessibilityTraits = [.button, .notEnabled]
+        } else {
+            self.accessibilityTraits = [.button]
         }
     }
     
@@ -156,6 +267,13 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
                             self.animationTimer = timer
                             timer.start()
                         }
+                    } else {
+                        self.animationNode?.play()
+                        let timer = SwiftSignalKit.Timer(timeout: 4.0, repeat: true, completion: { [weak self] in
+                            self?.animationNode?.play()
+                        }, queue: Queue.mainQueue())
+                        self.animationTimer = timer
+                        timer.start()
                     }
                 }
             } else if let animationNode = self.animationNode {
@@ -166,6 +284,14 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
     }
     
     public var iconSpacing: CGFloat = 8.0 {
+        didSet {
+            if let width = self.validLayout {
+                _ = self.updateLayout(width: width, transition: .immediate)
+            }
+        }
+    }
+    
+    public var animationSize: CGSize = CGSize(width: 30.0, height: 30.0) {
         didSet {
             if let width = self.validLayout {
                 _ = self.updateLayout(width: width, transition: .immediate)
@@ -230,6 +356,8 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
         
         super.init()
         
+        self.isAccessibilityElement = true
+        
         self.addSubnode(self.buttonBackgroundNode)
         self.addSubnode(self.buttonNode)
         self.addSubnode(self.titleNode)
@@ -266,6 +394,8 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
                 }
             }
         }
+        
+        self.updateAccessibilityLabels()
     }
     
     public override func didLoad() {
@@ -559,7 +689,7 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
         
         let iconSize: CGSize
         if let _ = self.animationNode {
-            iconSize = CGSize(width: 30.0, height: 30.0)
+            iconSize = self.animationSize
         } else {
             iconSize = self.iconNode.image?.size ?? CGSize()
         }
@@ -598,6 +728,23 @@ public final class SolidRoundedButtonNode: ASDisplayNode {
             transition.updateFrame(node: animationNode, frame: iconFrame)
         }
         transition.updateFrame(node: self.titleNode, frame: titleFrame)
+        
+        if let badge = self.badge {
+            let badgeNode: BadgeNode
+            if let current = self.badgeNode {
+                badgeNode = current
+            } else {
+                badgeNode = BadgeNode(fillColor: self.theme.foregroundColor, strokeColor: .clear, textColor: self.theme.backgroundColor)
+                self.badgeNode = badgeNode
+                self.addSubnode(badgeNode)
+            }
+            badgeNode.text = badge
+            let badgeSize = badgeNode.update(CGSize(width: 100.0, height: 100.0))
+            transition.updateFrame(node: badgeNode, frame: CGRect(origin: CGPoint(x: titleFrame.maxX + 4.0, y: titleFrame.minY + floor((titleFrame.height - badgeSize.height) * 0.5)), size: badgeSize))
+        } else if let badgeNode = self.badgeNode {
+            self.badgeNode = nil
+            badgeNode.removeFromSupernode()
+        }
         
         if self.subtitle != self.subtitleNode.attributedText?.string {
             self.subtitleNode.attributedText = NSAttributedString(string: self.subtitle ?? "", font: Font.regular(14.0), textColor: self.theme.foregroundColor)
@@ -735,6 +882,7 @@ public final class SolidRoundedButtonView: UIView {
     private let iconNode: UIImageView
     private var animationNode: SimpleAnimationNode?
     private var progressNode: UIImageView?
+    private var badgeNode: BadgeNode?
     
     private let buttonHeight: CGFloat
     private let buttonCornerRadius: CGFloat
@@ -744,6 +892,16 @@ public final class SolidRoundedButtonView: UIView {
     
     public var title: String? {
         didSet {
+            self.updateAccessibilityLabels()
+            if let width = self.validLayout {
+                _ = self.updateLayout(width: width, transition: .immediate)
+            }
+        }
+    }
+    
+    public var label: String? {
+        didSet {
+            self.updateAccessibilityLabels()
             if let width = self.validLayout {
                 _ = self.updateLayout(width: width, transition: .immediate)
             }
@@ -752,15 +910,44 @@ public final class SolidRoundedButtonView: UIView {
     
     public var subtitle: String? {
         didSet {
+            self.updateAccessibilityLabels()
             if let width = self.validLayout {
                 _ = self.updateLayout(width: width, previousSubtitle: oldValue, transition: .immediate)
             }
         }
     }
     
+    public var badge: String? {
+        didSet {
+            self.updateAccessibilityLabels()
+            if let width = self.validLayout {
+                _ = self.updateLayout(width: width, transition: .immediate)
+            }
+        }
+    }
+    
+    private func updateAccessibilityLabels() {
+        self.accessibilityLabel = (self.title ?? "") + " " + (self.subtitle ?? "")
+        self.accessibilityValue = self.label
+        if !self.isEnabled {
+            self.accessibilityTraits = [.button, .notEnabled]
+        } else {
+            self.accessibilityTraits = [.button]
+        }
+    }
+    
     public var icon: UIImage? {
         didSet {
             self.iconNode.image = generateTintedImage(image: self.icon, color: self.theme.foregroundColor)
+        }
+    }
+    
+    public var isEnabled: Bool = true {
+        didSet {
+            if self.isEnabled != oldValue {
+                self.titleNode.alpha = self.isEnabled ? 1.0 : 0.6
+            }
+            self.updateAccessibilityLabels()
         }
     }
     
@@ -794,6 +981,13 @@ public final class SolidRoundedButtonView: UIView {
                             self.animationTimer = timer
                             timer.start()
                         }
+                    } else {
+                        self.animationNode?.play()
+                        let timer = SwiftSignalKit.Timer(timeout: 4.0, repeat: true, completion: { [weak self] in
+                            self?.animationNode?.play()
+                        }, queue: Queue.mainQueue())
+                        self.animationTimer = timer
+                        timer.start()
                     }
                 }
             } else if let animationNode = self.animationNode {
@@ -832,13 +1026,15 @@ public final class SolidRoundedButtonView: UIView {
     
     public var progressType: SolidRoundedButtonProgressType = .fullSize
     
-    public init(title: String? = nil, icon: UIImage? = nil, theme: SolidRoundedButtonTheme, font: SolidRoundedButtonFont = .bold, fontSize: CGFloat = 17.0, height: CGFloat = 48.0, cornerRadius: CGFloat = 24.0, gloss: Bool = false) {
+    public init(title: String? = nil, label: String? = nil, badge: String? = nil, icon: UIImage? = nil, theme: SolidRoundedButtonTheme, font: SolidRoundedButtonFont = .bold, fontSize: CGFloat = 17.0, height: CGFloat = 48.0, cornerRadius: CGFloat = 24.0, gloss: Bool = false) {
         self.theme = theme
         self.font = font
         self.fontSize = fontSize
         self.buttonHeight = height
         self.buttonCornerRadius = cornerRadius
         self.title = title
+        self.label = label
+        self.badge = badge
         self.gloss = gloss
         
         self.buttonBackgroundNode = UIImageView()
@@ -877,6 +1073,8 @@ public final class SolidRoundedButtonView: UIView {
         self.iconNode.image = generateTintedImage(image: icon, color: self.theme.foregroundColor)
         
         super.init(frame: CGRect())
+        
+        self.isAccessibilityElement = true
         
         self.addSubview(self.buttonBackgroundNode)
         self.addSubview(self.buttonNode)
@@ -919,6 +1117,8 @@ public final class SolidRoundedButtonView: UIView {
         if #available(iOS 13.0, *) {
             self.buttonBackgroundNode.layer.cornerCurve = .continuous
         }
+        
+        self.updateAccessibilityLabels()
     }
         
     required public init(coder: NSCoder) {
@@ -1152,7 +1352,13 @@ public final class SolidRoundedButtonView: UIView {
             self.buttonBackgroundAnimationView?.image = nil
         }
         
-        self.titleNode.attributedText = NSAttributedString(string: self.title ?? "", font: self.font == .bold ? Font.semibold(self.fontSize) : Font.regular(self.fontSize), textColor: theme.foregroundColor)
+        let titleText = NSMutableAttributedString()
+        titleText.append(NSAttributedString(string: self.title ?? "", font: self.font == .bold ? Font.semibold(self.fontSize) : Font.regular(self.fontSize), textColor: theme.foregroundColor))
+        if let label = self.label {
+            titleText.append(NSAttributedString(string: " " + label, font: self.font == .bold ? Font.semibold(self.fontSize) : Font.regular(self.fontSize), textColor: theme.foregroundColor.withAlphaComponent(0.6)))
+        }
+        
+        self.titleNode.attributedText = titleText
         self.subtitleNode.attributedText = NSAttributedString(string: self.subtitle ?? "", font: Font.regular(14.0), textColor: theme.foregroundColor)
         
         self.iconNode.image = generateTintedImage(image: self.iconNode.image, color: theme.foregroundColor)
@@ -1197,9 +1403,13 @@ public final class SolidRoundedButtonView: UIView {
 
         transition.updateFrame(view: self.buttonNode, frame: buttonFrame)
         
-        if self.title != self.titleNode.attributedText?.string {
-            self.titleNode.attributedText = NSAttributedString(string: self.title ?? "", font: self.font == .bold ? Font.semibold(self.fontSize) : Font.regular(self.fontSize), textColor: self.theme.foregroundColor)
+        let titleText = NSMutableAttributedString()
+        titleText.append(NSAttributedString(string: self.title ?? "", font: self.font == .bold ? Font.semibold(self.fontSize) : Font.regular(self.fontSize), textColor: theme.foregroundColor))
+        if let label = self.label {
+            titleText.append(NSAttributedString(string: " " + label, font: self.font == .bold ? Font.semibold(self.fontSize) : Font.regular(self.fontSize), textColor: theme.foregroundColor.withAlphaComponent(0.6)))
         }
+        
+        self.titleNode.attributedText = titleText
         
         let iconSize: CGSize
         if let _ = self.animationNode {
@@ -1241,6 +1451,23 @@ public final class SolidRoundedButtonView: UIView {
             transition.updateFrame(view: animationNode.view, frame: iconFrame)
         }
         transition.updateFrame(view: self.titleNode, frame: titleFrame)
+        
+        if let badge = self.badge {
+            let badgeNode: BadgeNode
+            if let current = self.badgeNode {
+                badgeNode = current
+            } else {
+                badgeNode = BadgeNode(fillColor: self.theme.foregroundColor, strokeColor: .clear, textColor: self.theme.backgroundColor)
+                self.badgeNode = badgeNode
+                self.addSubnode(badgeNode)
+            }
+            badgeNode.text = badge
+            let badgeSize = badgeNode.update(CGSize(width: 100.0, height: 100.0))
+            transition.updateFrame(node: badgeNode, frame: CGRect(origin: CGPoint(x: titleFrame.maxX + 4.0, y: titleFrame.minY + floor((titleFrame.height - badgeSize.height) * 0.5)), size: badgeSize))
+        } else if let badgeNode = self.badgeNode {
+            self.badgeNode = nil
+            badgeNode.removeFromSupernode()
+        }
         
         if self.subtitle != self.subtitleNode.attributedText?.string {
             self.subtitleNode.attributedText = NSAttributedString(string: self.subtitle ?? "", font: Font.regular(14.0), textColor: self.theme.foregroundColor)

@@ -7,6 +7,7 @@ private enum ApplicationSpecificPreferencesKeyValues: Int32 {
     case chatArchiveSettings = 17
     case chatListFilterSettings = 18
     case widgetSettings = 19
+    case mediaAutoSaveSettings = 20
 }
 
 public struct ApplicationSpecificPreferencesKeys {
@@ -14,6 +15,7 @@ public struct ApplicationSpecificPreferencesKeys {
     public static let chatArchiveSettings = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.chatArchiveSettings.rawValue)
     public static let chatListFilterSettings = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.chatListFilterSettings.rawValue)
     public static let widgetSettings = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.widgetSettings.rawValue)
+    public static let mediaAutoSaveSettings = applicationSpecificPreferencesKey(ApplicationSpecificPreferencesKeyValues.mediaAutoSaveSettings.rawValue)
 }
 
 private enum ApplicationSpecificSharedDataKeyValues: Int32 {
@@ -36,6 +38,7 @@ private enum ApplicationSpecificSharedDataKeyValues: Int32 {
     case webBrowserSettings = 16
     case intentsSettings = 17
     case translationSettings = 18
+    case drawingSettings = 19
 }
 
 public struct ApplicationSpecificSharedDataKeys {
@@ -58,6 +61,7 @@ public struct ApplicationSpecificSharedDataKeys {
     public static let webBrowserSettings = applicationSpecificPreferencesKey(ApplicationSpecificSharedDataKeyValues.webBrowserSettings.rawValue)
     public static let intentsSettings = applicationSpecificPreferencesKey(ApplicationSpecificSharedDataKeyValues.intentsSettings.rawValue)
     public static let translationSettings = applicationSpecificPreferencesKey(ApplicationSpecificSharedDataKeyValues.translationSettings.rawValue)
+    public static let drawingSettings = applicationSpecificPreferencesKey(ApplicationSpecificSharedDataKeyValues.drawingSettings.rawValue)
 }
 
 private enum ApplicationSpecificItemCacheCollectionIdValues: Int8 {
@@ -69,6 +73,7 @@ private enum ApplicationSpecificItemCacheCollectionIdValues: Int8 {
     case visualMediaStoredState = 5
     case cachedImageRecognizedContent = 6
     case pendingInAppPurchaseState = 7
+    case translationState = 10
 }
 
 public struct ApplicationSpecificItemCacheCollectionId {
@@ -80,6 +85,7 @@ public struct ApplicationSpecificItemCacheCollectionId {
     public static let visualMediaStoredState = applicationSpecificItemCacheCollectionId(ApplicationSpecificItemCacheCollectionIdValues.visualMediaStoredState.rawValue)
     public static let cachedImageRecognizedContent = applicationSpecificItemCacheCollectionId(ApplicationSpecificItemCacheCollectionIdValues.cachedImageRecognizedContent.rawValue)
     public static let pendingInAppPurchaseState = applicationSpecificItemCacheCollectionId(ApplicationSpecificItemCacheCollectionIdValues.pendingInAppPurchaseState.rawValue)
+    public static let translationState = applicationSpecificItemCacheCollectionId(ApplicationSpecificItemCacheCollectionIdValues.translationState.rawValue)
 }
 
 private enum ApplicationSpecificOrderedItemListCollectionIdValues: Int32 {

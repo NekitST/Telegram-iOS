@@ -11,7 +11,7 @@ public enum MessageHistoryInput: Equatable, Hashable {
         }
     }
     
-    case automatic(Automatic?)
+    case automatic(threadId: Int64?, info: Automatic?)
     case external(MessageHistoryViewExternalInput, MessageTags?)
     
     public func hash(into hasher: inout Hasher) {
@@ -27,8 +27,8 @@ public enum MessageHistoryInput: Equatable, Hashable {
 private extension MessageHistoryInput {
     func fetch(postbox: PostboxImpl, peerId: PeerId, namespace: MessageId.Namespace, from fromIndex: MessageIndex, includeFrom: Bool, to toIndex: MessageIndex, ignoreMessagesInTimestampRange: ClosedRange<Int32>?, limit: Int) -> [IntermediateMessage] {
         switch self {
-        case let .automatic(automatic):
-            var items = postbox.messageHistoryTable.fetch(peerId: peerId, namespace: namespace, tag: automatic?.tag, threadId: nil, from: fromIndex, includeFrom: includeFrom, to: toIndex, ignoreMessagesInTimestampRange: ignoreMessagesInTimestampRange, limit: limit)
+        case let .automatic(threadId, automatic):
+            var items = postbox.messageHistoryTable.fetch(peerId: peerId, namespace: namespace, tag: automatic?.tag, threadId: threadId, from: fromIndex, includeFrom: includeFrom, to: toIndex, ignoreMessagesInTimestampRange: ignoreMessagesInTimestampRange, limit: limit)
             if let automatic = automatic, automatic.appendMessagesFromTheSameGroup {
                 enum Direction {
                     case lowToHigh
@@ -171,11 +171,19 @@ private extension MessageHistoryInput {
     
     func getMessageCountInRange(postbox: PostboxImpl, peerId: PeerId, namespace: MessageId.Namespace, lowerBound: MessageIndex, upperBound: MessageIndex) -> Int {
         switch self {
-        case let .automatic(automatic):
+        case let .automatic(threadId, automatic):
             if let automatic = automatic {
-                return postbox.messageHistoryTagsTable.getMessageCountInRange(tag: automatic.tag, peerId: peerId, namespace: namespace, lowerBound: lowerBound, upperBound: upperBound)
+                if let threadId = threadId {
+                    return postbox.messageHistoryThreadTagsTable.getMessageCountInRange(tag: automatic.tag, threadId: threadId, peerId: peerId, namespace: namespace, lowerBound: lowerBound, upperBound: upperBound)
+                } else {
+                    return postbox.messageHistoryTagsTable.getMessageCountInRange(tag: automatic.tag, peerId: peerId, namespace: namespace, lowerBound: lowerBound, upperBound: upperBound)
+                }
             } else {
-                return postbox.messageHistoryTable.getMessageCountInRange(peerId: peerId, namespace: namespace, tag: nil, lowerBound: lowerBound, upperBound: upperBound)
+                if let threadId = threadId {
+                    return postbox.messageHistoryThreadsTable.getMessageCountInRange(threadId: threadId, peerId: peerId, namespace: namespace, lowerBound: lowerBound, upperBound: upperBound)
+                } else {
+                    return postbox.messageHistoryTable.getMessageCountInRange(peerId: peerId, namespace: namespace, tag: nil, lowerBound: lowerBound, upperBound: upperBound)
+                }
             }
         case .external:
             return 0
@@ -260,7 +268,18 @@ enum HistoryViewAnchor {
     case lowerBound
     case index(MessageIndex)
     
-    func isLower(than otherIndex: MessageIndex) -> Bool {
+    func isLower(than otherIndex: MessageIndex, peerId: PeerId, namespace: MessageId.Namespace) -> Bool {
+        switch self {
+            case .upperBound:
+                return false
+            case .lowerBound:
+                return true
+            case let .index(index):
+                return index.withPeerId(peerId).withNamespace(namespace) < otherIndex.withPeerId(peerId).withNamespace(namespace)
+        }
+    }
+    
+    func internal_isLower(than otherIndex: MessageIndex) -> Bool {
         switch self {
             case .upperBound:
                 return false
@@ -271,18 +290,40 @@ enum HistoryViewAnchor {
         }
     }
     
-    func isEqualOrLower(than otherIndex: MessageIndex) -> Bool {
+    func isEqualOrLower(than otherIndex: MessageIndex, peerId: PeerId, namespace: MessageId.Namespace) -> Bool {
         switch self {
             case .upperBound:
                 return false
             case .lowerBound:
                 return true
             case let .index(index):
-                return index <= otherIndex
+                return index.withPeerId(peerId).withNamespace(namespace) <= otherIndex.withPeerId(peerId).withNamespace(namespace)
         }
     }
     
-    func isGreater(than otherIndex: MessageIndex) -> Bool {
+    func isGreater(than otherIndex: MessageIndex, peerId: PeerId, namespace: MessageId.Namespace) -> Bool {
+        switch self {
+            case .upperBound:
+                return true
+            case .lowerBound:
+                return false
+            case let .index(index):
+                return index.withPeerId(peerId).withNamespace(namespace) > otherIndex.withPeerId(peerId).withNamespace(namespace)
+        }
+    }
+    
+    func isEqualOrGreater(than otherIndex: MessageIndex, peerId: PeerId, namespace: MessageId.Namespace) -> Bool {
+        switch self {
+            case .upperBound:
+                return true
+            case .lowerBound:
+                return false
+            case let .index(index):
+                return index.withPeerId(peerId).withNamespace(namespace) >= otherIndex.withPeerId(peerId).withNamespace(namespace)
+        }
+    }
+    
+    func internal_isGreater(than otherIndex: MessageIndex) -> Bool {
         switch self {
             case .upperBound:
                 return true
@@ -292,28 +333,17 @@ enum HistoryViewAnchor {
                 return index > otherIndex
         }
     }
-    
-    func isEqualOrGreater(than otherIndex: MessageIndex) -> Bool {
-        switch self {
-            case .upperBound:
-                return true
-            case .lowerBound:
-                return false
-            case let .index(index):
-                return index >= otherIndex
-        }
-    }
 }
 
-private func binaryInsertionIndex(_ inputArr: [MutableMessageHistoryEntry], searchItem: HistoryViewAnchor) -> Int {
+private func binaryInsertionIndex(_ inputArr: [MutableMessageHistoryEntry], searchItem: HistoryViewAnchor, peerId: PeerId, namespace: MessageId.Namespace) -> Int {
     var lo = 0
     var hi = inputArr.count - 1
     while lo <= hi {
         let mid = (lo + hi) / 2
         let value = inputArr[mid]
-        if searchItem.isGreater(than: value.index) {
+        if searchItem.isGreater(than: value.index, peerId: peerId, namespace: namespace) {
             lo = mid + 1
-        } else if searchItem.isLower(than: value.index) {
+        } else if searchItem.isLower(than: value.index, peerId: peerId, namespace: namespace) {
             hi = mid - 1
         } else {
             return mid
@@ -322,14 +352,46 @@ private func binaryInsertionIndex(_ inputArr: [MutableMessageHistoryEntry], sear
     return lo
 }
 
+func binaryIndexOrLower(_ inputArr: [MessageHistoryEntry], _ searchItem: HistoryViewAnchor, peerId: PeerId, namespace: MessageId.Namespace) -> Int {
+    var lo = 0
+    var hi = inputArr.count - 1
+    while lo <= hi {
+        let mid = (lo + hi) / 2
+        if searchItem.isGreater(than: inputArr[mid].index, peerId: peerId, namespace: namespace) {
+            lo = mid + 1
+        } else if searchItem.isLower(than: inputArr[mid].index, peerId: peerId, namespace: namespace) {
+            hi = mid - 1
+        } else {
+            return mid
+        }
+    }
+    return hi
+}
+
 func binaryIndexOrLower(_ inputArr: [MessageHistoryEntry], _ searchItem: HistoryViewAnchor) -> Int {
     var lo = 0
     var hi = inputArr.count - 1
     while lo <= hi {
         let mid = (lo + hi) / 2
-        if searchItem.isGreater(than: inputArr[mid].index) {
+        if searchItem.internal_isGreater(than: inputArr[mid].index) {
             lo = mid + 1
-        } else if searchItem.isLower(than: inputArr[mid].index) {
+        } else if searchItem.internal_isLower(than: inputArr[mid].index) {
+            hi = mid - 1
+        } else {
+            return mid
+        }
+    }
+    return hi
+}
+
+func binaryIndexOrLower(_ inputArr: [MessageHistoryMessageEntry], _ searchItem: HistoryViewAnchor, peerId: PeerId, namespace: MessageId.Namespace) -> Int {
+    var lo = 0
+    var hi = inputArr.count - 1
+    while lo <= hi {
+        let mid = (lo + hi) / 2
+        if searchItem.isGreater(than: inputArr[mid].message.index, peerId: peerId, namespace: namespace) {
+            lo = mid + 1
+        } else if searchItem.isLower(than: inputArr[mid].message.index, peerId: peerId, namespace: namespace) {
             hi = mid - 1
         } else {
             return mid
@@ -343,9 +405,9 @@ func binaryIndexOrLower(_ inputArr: [MessageHistoryMessageEntry], _ searchItem: 
     var hi = inputArr.count - 1
     while lo <= hi {
         let mid = (lo + hi) / 2
-        if searchItem.isGreater(than: inputArr[mid].message.index) {
+        if searchItem.internal_isGreater(than: inputArr[mid].message.index) {
             lo = mid + 1
-        } else if searchItem.isLower(than: inputArr[mid].message.index) {
+        } else if searchItem.internal_isLower(than: inputArr[mid].message.index) {
             hi = mid - 1
         } else {
             return mid
@@ -354,14 +416,14 @@ func binaryIndexOrLower(_ inputArr: [MessageHistoryMessageEntry], _ searchItem: 
     return hi
 }
 
-private func binaryIndexOrLower(_ inputArr: [MutableMessageHistoryEntry], _ searchItem: HistoryViewAnchor) -> Int {
+private func binaryIndexOrLower(_ inputArr: [MutableMessageHistoryEntry], _ searchItem: HistoryViewAnchor, peerId: PeerId, namespace: MessageId.Namespace) -> Int {
     var lo = 0
     var hi = inputArr.count - 1
     while lo <= hi {
         let mid = (lo + hi) / 2
-        if searchItem.isGreater(than: inputArr[mid].index) {
+        if searchItem.isGreater(than: inputArr[mid].index, peerId: peerId, namespace: namespace) {
             lo = mid + 1
-        } else if searchItem.isLower(than: inputArr[mid].index) {
+        } else if searchItem.isLower(than: inputArr[mid].index, peerId: peerId, namespace: namespace) {
             hi = mid - 1
         } else {
             return mid
@@ -492,8 +554,9 @@ private func sampleHoleRanges(input: MessageHistoryInput, orderedEntriesBySpace:
     var tag: MessageTags?
     var threadId: Int64?
     switch input {
-    case let .automatic(automatic):
+    case let .automatic(threadIdValue, automatic):
         tag = automatic?.tag
+        threadId = threadIdValue
     case let .external(value, _):
         switch value.content {
         case let .thread(_, id, _):
@@ -524,7 +587,13 @@ private func sampleHoleRanges(input: MessageHistoryInput, orderedEntriesBySpace:
             case let .index(index):
                 if index.id.peerId == space.peerId && index.id.namespace == space.namespace {
                     if indices.contains(Int(index.id.id)) {
+                        if tag == nil && space.namespace == 0 {
+                            assert(true)
+                        }
+                        
                         return ([MessageIndex.absoluteLowerBound() ... MessageIndex.absoluteUpperBound()], SampledHistoryViewHole(peerId: space.peerId, namespace: space.namespace, tag: tag, threadId: threadId, indices: indices, startId: index.id.id, endId: nil))
+                    } else {
+                        //print("\(indices.rangeView.map({ $0 })) do not contain \(index.id.id)")
                     }
                 }
         }
@@ -536,6 +605,11 @@ private func sampleHoleRanges(input: MessageHistoryInput, orderedEntriesBySpace:
                 case .upperBound, .index:
                     holeBounds = (Int32.max - 1, 1)
             }
+            
+            if tag == nil && space.namespace == 0 {
+                assert(true)
+            }
+            
             if case let .index(index) = anchor, index.id.peerId == space.peerId {
                 return ([MessageIndex.absoluteLowerBound() ... MessageIndex.absoluteUpperBound()], SampledHistoryViewHole(peerId: space.peerId, namespace: space.namespace, tag: tag, threadId: threadId, indices: indices, startId: holeBounds.startId, endId: holeBounds.endId))
             } else {
@@ -576,6 +650,11 @@ private func sampleHoleRanges(input: MessageHistoryInput, orderedEntriesBySpace:
                 } else {
                     holeStartIndex = indices[indices.endIndex]
                 }
+                
+                if tag == nil && space.namespace == 0 {
+                    assert(true)
+                }
+                
                 lowerOrAtAnchorHole = (items.lowerOrAtAnchor.count - i, SampledHistoryViewHole(peerId: space.peerId, namespace: space.namespace, tag: tag, threadId: threadId, indices: indices, startId: Int32(holeStartIndex), endId: 1))
                 
                 if i == -1 {
@@ -644,6 +723,11 @@ private func sampleHoleRanges(input: MessageHistoryInput, orderedEntriesBySpace:
                 } else {
                     holeStartIndex = indices[indices.startIndex]
                 }
+                
+                if tag == nil && space.namespace == 0 {
+                    assert(true)
+                }
+                
                 higherThanAnchorHole = (i, SampledHistoryViewHole(peerId: space.peerId, namespace: space.namespace, tag: tag, threadId: threadId, indices: indices, startId: Int32(holeStartIndex), endId: Int32.max - 1))
                 
                 if i == items.higherThanAnchor.count {
@@ -748,12 +832,19 @@ struct HistoryViewHoles {
 }
 
 struct OrderedHistoryViewEntries {
+    private let spacePeerId: PeerId
+    private let spaceNamespace: MessageId.Namespace
+    private let anchor: HistoryViewAnchor
     private(set) var lowerOrAtAnchor: [MutableMessageHistoryEntry]
     private(set) var higherThanAnchor: [MutableMessageHistoryEntry]
     
     private(set) var reverseAssociatedIndices: [MessageId: [MessageIndex]] = [:]
     
-    fileprivate init(lowerOrAtAnchor: [MutableMessageHistoryEntry], higherThanAnchor: [MutableMessageHistoryEntry]) {
+    fileprivate init(spacePeerId: PeerId, spaceNamespace: MessageId.Namespace, anchor: HistoryViewAnchor, lowerOrAtAnchor: [MutableMessageHistoryEntry], higherThanAnchor: [MutableMessageHistoryEntry]) {
+        self.spacePeerId = spacePeerId
+        self.spaceNamespace = spaceNamespace
+        self.anchor = anchor
+        
         self.lowerOrAtAnchor = lowerOrAtAnchor
         self.higherThanAnchor = higherThanAnchor
         
@@ -775,6 +866,20 @@ struct OrderedHistoryViewEntries {
                 }
             }
         }
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     mutating func setLowerOrAtAnchorAtArrayIndex(_ index: Int, to value: MutableMessageHistoryEntry) {
@@ -800,6 +905,20 @@ struct OrderedHistoryViewEntries {
                 }
             }
         }
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     mutating func setHigherThanAnchorAtArrayIndex(_ index: Int, to value: MutableMessageHistoryEntry) {
@@ -825,6 +944,20 @@ struct OrderedHistoryViewEntries {
                 }
             }
         }
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     mutating func insertLowerOrAtAnchorAtArrayIndex(_ index: Int, value: MutableMessageHistoryEntry) {
@@ -837,6 +970,20 @@ struct OrderedHistoryViewEntries {
                 self.reverseAssociatedIndices[id]!.append(value.index)
             }
         }
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     mutating func insertHigherThanAnchorAtArrayIndex(_ index: Int, value: MutableMessageHistoryEntry) {
@@ -849,6 +996,20 @@ struct OrderedHistoryViewEntries {
                 self.reverseAssociatedIndices[id]!.append(value.index)
             }
         }
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     mutating func removeLowerOrAtAnchorAtArrayIndex(_ index: Int) {
@@ -861,6 +1022,20 @@ struct OrderedHistoryViewEntries {
         }
         
         self.lowerOrAtAnchor.remove(at: index)
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     mutating func removeHigherThanAnchorAtArrayIndex(_ index: Int) {
@@ -873,6 +1048,20 @@ struct OrderedHistoryViewEntries {
         }
         
         self.higherThanAnchor.remove(at: index)
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     mutating func fixMonotony() {
@@ -915,6 +1104,20 @@ struct OrderedHistoryViewEntries {
             self.lowerOrAtAnchor.sort(by: { $0.index.id.id < $1.index.id.id })
             self.higherThanAnchor.sort(by: { $0.index.id.id < $1.index.id.id })
         }
+        
+        #if DEBUG
+        for entry in self.lowerOrAtAnchor {
+            assert(self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        for entry in self.higherThanAnchor {
+            assert(!self.anchor.isEqualOrGreater(than: entry.index, peerId: self.spacePeerId, namespace: self.spaceNamespace))
+        }
+        if !self.lowerOrAtAnchor.isEmpty && !self.higherThanAnchor.isEmpty {
+            let lowerMax = self.lowerOrAtAnchor.map(\.index.id.id).max()!
+            let upperMin = self.higherThanAnchor.map(\.index.id.id).min()!
+            assert(upperMin > lowerMax)
+        }
+        #endif
     }
     
     func find(index: MessageIndex) -> MutableMessageHistoryEntry? {
@@ -1016,9 +1219,9 @@ final class HistoryViewLoadedState {
         
         let input: MessageHistoryInput
         switch locations {
-        case let .single(peerId):
+        case let .single(peerId, threadId):
             peerIds.append(peerId)
-            input = .automatic(tag.flatMap { tag in
+            input = .automatic(threadId: threadId, info: tag.flatMap { tag in
                 MessageHistoryInput.Automatic(tag: tag, appendMessagesFromTheSameGroup: appendMessagesFromTheSameGroup)
             })
         case let .associated(peerId, associatedId):
@@ -1026,7 +1229,7 @@ final class HistoryViewLoadedState {
             if let associatedId = associatedId {
                 peerIds.append(associatedId.peerId)
             }
-            input = .automatic(tag.flatMap { tag in
+            input = .automatic(threadId: nil, info: tag.flatMap { tag in
                 MessageHistoryInput.Automatic(tag: tag, appendMessagesFromTheSameGroup: appendMessagesFromTheSameGroup)
             })
         case let .external(external):
@@ -1103,7 +1306,7 @@ final class HistoryViewLoadedState {
         assert(lowerOrAtAnchorMessages.count <= self.halfLimit)
         assert(higherThanAnchorMessages.count <= self.halfLimit)
         
-        var entries = OrderedHistoryViewEntries(lowerOrAtAnchor: lowerOrAtAnchorMessages, higherThanAnchor: higherThanAnchorMessages)
+        var entries = OrderedHistoryViewEntries(spacePeerId: space.peerId, spaceNamespace: space.namespace, anchor: self.anchor, lowerOrAtAnchor: lowerOrAtAnchorMessages, higherThanAnchor: higherThanAnchorMessages)
         
         if case .automatic = self.input, self.statistics.contains(.combinedLocation), let first = entries.first {
             let messageIndex = first.index
@@ -1239,7 +1442,7 @@ final class HistoryViewLoadedState {
                                     messageMedia.append(media)
                                 }
                             }
-                            let updatedMessage = Message(stableId: message.stableId, stableVersion: message.stableVersion, id: message.id, globallyUniqueId: message.globallyUniqueId, groupingKey: message.groupingKey, groupInfo: message.groupInfo, threadId: message.threadId, timestamp: message.timestamp, flags: message.flags, tags: message.tags, globalTags: message.globalTags, localTags: message.localTags, forwardInfo: message.forwardInfo, author: message.author, text: message.text, attributes: message.attributes, media: messageMedia, peers: message.peers, associatedMessages: message.associatedMessages, associatedMessageIds: message.associatedMessageIds, associatedMedia: message.associatedMedia)
+                            let updatedMessage = Message(stableId: message.stableId, stableVersion: message.stableVersion, id: message.id, globallyUniqueId: message.globallyUniqueId, groupingKey: message.groupingKey, groupInfo: message.groupInfo, threadId: message.threadId, timestamp: message.timestamp, flags: message.flags, tags: message.tags, globalTags: message.globalTags, localTags: message.localTags, forwardInfo: message.forwardInfo, author: message.author, text: message.text, attributes: message.attributes, media: messageMedia, peers: message.peers, associatedMessages: message.associatedMessages, associatedMessageIds: message.associatedMessageIds, associatedMedia: message.associatedMedia, associatedThreadInfo: message.associatedThreadInfo)
                             return .MessageEntry(MessageHistoryMessageEntry(message: updatedMessage, location: value.location, monthLocation: value.monthLocation, attributes: value.attributes), reloadAssociatedMessages: reloadAssociatedMessages, reloadPeers: reloadPeers)
                         }
                     case .IntermediateMessageEntry:
@@ -1264,7 +1467,7 @@ final class HistoryViewLoadedState {
         let space = PeerIdAndNamespace(peerId: entry.index.id.peerId, namespace: entry.index.id.namespace)
         
         if self.orderedEntriesBySpace[space] == nil {
-            self.orderedEntriesBySpace[space] = OrderedHistoryViewEntries(lowerOrAtAnchor: [], higherThanAnchor: [])
+            self.orderedEntriesBySpace[space] = OrderedHistoryViewEntries(spacePeerId: space.peerId, spaceNamespace: space.namespace, anchor: self.anchor, lowerOrAtAnchor: [], higherThanAnchor: [])
         }
 
         var updated = false
@@ -1283,7 +1486,7 @@ final class HistoryViewLoadedState {
             }
         }
         
-        if self.anchor.isEqualOrGreater(than: entry.index) {
+        if self.anchor.isEqualOrGreater(than: entry.index, peerId: space.peerId, namespace: space.namespace) {
             let insertionIndex = binaryInsertionIndex(self.orderedEntriesBySpace[space]!.lowerOrAtAnchor, extract: { $0.index }, searchItem: entry.index)
             
             if insertionIndex < self.orderedEntriesBySpace[space]!.lowerOrAtAnchor.count {
@@ -1440,7 +1643,7 @@ final class HistoryViewLoadedState {
                         case let .MessageEntry(value, reloadAssociatedMessages, reloadPeers):
                             var updatedMessage = value.message
                             if reloadAssociatedMessages {
-                                let associatedMessages = postbox.messageHistoryTable.renderAssociatedMessages(associatedMessageIds: value.message.associatedMessageIds, peerTable: postbox.peerTable)
+                                let associatedMessages = postbox.messageHistoryTable.renderAssociatedMessages(associatedMessageIds: value.message.associatedMessageIds, peerTable: postbox.peerTable, threadIndexTable: postbox.messageHistoryThreadIndexTable)
                                 updatedMessage = value.message.withUpdatedAssociatedMessages(associatedMessages)
                             }
                             if reloadPeers {
@@ -1459,7 +1662,7 @@ final class HistoryViewLoadedState {
                                 result.append(value)
                             }
                         case let .IntermediateMessageEntry(message, location, monthLocation):
-                            let renderedMessage = postbox.messageHistoryTable.renderMessage(message, peerTable: postbox.peerTable)
+                            let renderedMessage = postbox.messageHistoryTable.renderMessage(message, peerTable: postbox.peerTable, threadIndexTable: postbox.messageHistoryThreadIndexTable)
                             var authorIsContact = false
                             if let author = renderedMessage.author {
                                 authorIsContact = postbox.contactsTable.isContact(peerId: author.id)
@@ -1482,9 +1685,11 @@ final class HistoryViewLoadedState {
 
 private func fetchHoles(postbox: PostboxImpl, locations: MessageHistoryViewInput, tag: MessageTags?, namespaces: MessageIdNamespaces) -> [PeerIdAndNamespace: IndexSet] {
     var peerIds: [PeerId] = []
+    var threadId: Int64?
     switch locations {
-    case let .single(peerId):
+    case let .single(peerId, threadIdValue):
         peerIds.append(peerId)
+        threadId = threadIdValue
     case let .associated(peerId, associatedId):
         peerIds.append(peerId)
         if let associatedId = associatedId {
@@ -1508,15 +1713,30 @@ private func fetchHoles(postbox: PostboxImpl, locations: MessageHistoryViewInput
         var holesBySpace: [PeerIdAndNamespace: IndexSet] = [:]
         let holeSpace = tag.flatMap(MessageHistoryHoleSpace.tag) ?? .everywhere
         for peerId in peerIds {
-            for namespace in postbox.messageHistoryHoleIndexTable.existingNamespaces(peerId: peerId, holeSpace: holeSpace) {
-                if namespaces.contains(namespace) {
-                    let indices = postbox.messageHistoryHoleIndexTable.closest(peerId: peerId, namespace: namespace, space: holeSpace, range: 1 ... (Int32.max - 1))
-                    if !indices.isEmpty {
-                        let peerIdAndNamespace = PeerIdAndNamespace(peerId: peerId, namespace: namespace)
-                        assert(canContainHoles(peerIdAndNamespace, input: .automatic(tag.flatMap { tag in
-                            MessageHistoryInput.Automatic(tag: tag, appendMessagesFromTheSameGroup: false)
-                        }), seedConfiguration: postbox.seedConfiguration))
-                        holesBySpace[peerIdAndNamespace] = indices
+            if let threadId = threadId {
+                for namespace in postbox.messageHistoryThreadHoleIndexTable.existingNamespaces(peerId: peerId, threadId: threadId, holeSpace: holeSpace) {
+                    if namespaces.contains(namespace) {
+                        let indices = postbox.messageHistoryThreadHoleIndexTable.closest(peerId: peerId, threadId: threadId, namespace: namespace, space: holeSpace, range: 1 ... (Int32.max - 1))
+                        if !indices.isEmpty {
+                            let peerIdAndNamespace = PeerIdAndNamespace(peerId: peerId, namespace: namespace)
+                            assert(canContainHoles(peerIdAndNamespace, input: .automatic(threadId: threadId, info: tag.flatMap { tag in
+                                MessageHistoryInput.Automatic(tag: tag, appendMessagesFromTheSameGroup: false)
+                            }), seedConfiguration: postbox.seedConfiguration))
+                            holesBySpace[peerIdAndNamespace] = indices
+                        }
+                    }
+                }
+            } else {
+                for namespace in postbox.messageHistoryHoleIndexTable.existingNamespaces(peerId: peerId, holeSpace: holeSpace) {
+                    if namespaces.contains(namespace) {
+                        let indices = postbox.messageHistoryHoleIndexTable.closest(peerId: peerId, namespace: namespace, space: holeSpace, range: 1 ... (Int32.max - 1))
+                        if !indices.isEmpty {
+                            let peerIdAndNamespace = PeerIdAndNamespace(peerId: peerId, namespace: namespace)
+                            assert(canContainHoles(peerIdAndNamespace, input: .automatic(threadId: nil, info: tag.flatMap { tag in
+                                MessageHistoryInput.Automatic(tag: tag, appendMessagesFromTheSameGroup: false)
+                            }), seedConfiguration: postbox.seedConfiguration))
+                            holesBySpace[peerIdAndNamespace] = indices
+                        }
                     }
                 }
             }
@@ -1612,8 +1832,12 @@ enum HistoryViewState {
             case .unread:
                 let anchorPeerId: PeerId
                 switch locations {
-                    case let .single(peerId):
+                    case let .single(peerId, threadId):
                         anchorPeerId = peerId
+                        if threadId != nil {
+                            self = .loaded(HistoryViewLoadedState(anchor: .upperBound, tag: tag, appendMessagesFromTheSameGroup: appendMessagesFromTheSameGroup, namespaces: namespaces, statistics: statistics, ignoreMessagesInTimestampRange: ignoreMessagesInTimestampRange, halfLimit: halfLimit, locations: locations, postbox: postbox, holes: HistoryViewHoles(holesBySpace: fetchHoles(postbox: postbox, locations: locations, tag: tag, namespaces: namespaces))))
+                            return
+                        }
                     case let .associated(peerId, _):
                         anchorPeerId = peerId
                     case .external:
@@ -1661,6 +1885,8 @@ enum HistoryViewState {
             case let .message(messageId):
                 var threadId: Int64?
                 switch locations {
+                case let .single(_, threadIdValue):
+                    threadId = threadIdValue
                 case let .external(input):
                     switch input.content {
                     case let .thread(_, id, _):

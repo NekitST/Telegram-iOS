@@ -32,6 +32,7 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
         let constrainedSize: CGSize
         let animationCache: AnimationCache?
         let animationRenderer: MultiAnimationRenderer?
+        let associatedData: ChatMessageItemAssociatedData
         
         init(
             presentationData: ChatPresentationData,
@@ -42,7 +43,8 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
             parentMessage: Message,
             constrainedSize: CGSize,
             animationCache: AnimationCache?,
-            animationRenderer: MultiAnimationRenderer?
+            animationRenderer: MultiAnimationRenderer?,
+            associatedData: ChatMessageItemAssociatedData
         ) {
             self.presentationData = presentationData
             self.strings = strings
@@ -53,6 +55,7 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
             self.constrainedSize = constrainedSize
             self.animationCache = animationCache
             self.animationRenderer = animationRenderer
+            self.associatedData = associatedData
         }
     }
     
@@ -97,8 +100,6 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
         let previousMediaReference = maybeNode?.previousMediaReference
         
         return { arguments in
-            //presentationData, strings, context, type, message, parentMessage, constrainedSize
-            
             let fontSize = floor(arguments.presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)
             let titleFont = Font.medium(fontSize)
             let textFont = Font.regular(fontSize)
@@ -167,8 +168,23 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
             
             let messageText: NSAttributedString
             if isText {
-                let entities = (arguments.message.textEntitiesAttribute?.entities ?? []).filter { entity in
-                    if case .Spoiler = entity.type {
+                var text = arguments.message.text
+                var messageEntities = arguments.message.textEntitiesAttribute?.entities ?? []
+                
+                if let translateToLanguage = arguments.associatedData.translateToLanguage, !text.isEmpty {
+                    for attribute in arguments.message.attributes {
+                        if let attribute = attribute as? TranslationMessageAttribute, !attribute.text.isEmpty, attribute.toLang == translateToLanguage {
+                            text = attribute.text
+                            messageEntities = attribute.entities
+                            break
+                        }
+                    }
+                }
+                    
+                let entities = messageEntities.filter { entity in
+                    if case .Strikethrough = entity.type {
+                        return true
+                    } else if case .Spoiler = entity.type {
                         return true
                     } else if case .CustomEmoji = entity.type {
                         return true
@@ -177,9 +193,9 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
                     }
                 }
                 if entities.count > 0 {
-                    messageText = stringWithAppliedEntities(trimToLineCount(arguments.message.text, lineCount: 1), entities: entities, baseColor: textColor, linkColor: textColor, baseFont: textFont, linkFont: textFont, boldFont: textFont, italicFont: textFont, boldItalicFont: textFont, fixedFont: textFont, blockQuoteFont: textFont, underlineLinks: false, message: arguments.message)
+                    messageText = stringWithAppliedEntities(trimToLineCount(text, lineCount: 1), entities: entities, baseColor: textColor, linkColor: textColor, baseFont: textFont, linkFont: textFont, boldFont: textFont, italicFont: textFont, boldItalicFont: textFont, fixedFont: textFont, blockQuoteFont: textFont, underlineLinks: false, message: arguments.message)
                 } else {
-                    messageText = NSAttributedString(string: textString.string, font: textFont, textColor: textColor)
+                    messageText = NSAttributedString(string: text, font: textFont, textColor: textColor)
                 }
             } else {
                 messageText = NSAttributedString(string: textString.string, font: textFont, textColor: textColor)
@@ -252,15 +268,17 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
                 mediaUpdated = true
             }
             
+            let hasSpoiler = arguments.message.attributes.contains(where: { $0 is MediaSpoilerMessageAttribute })
+            
             var updateImageSignal: Signal<(TransformImageArguments) -> DrawingContext?, NoError>?
             if let updatedMediaReference = updatedMediaReference, mediaUpdated && imageDimensions != nil {
                 if let imageReference = updatedMediaReference.concrete(TelegramMediaImage.self) {
-                    updateImageSignal = chatMessagePhotoThumbnail(account: arguments.context.account, photoReference: imageReference)
+                    updateImageSignal = chatMessagePhotoThumbnail(account: arguments.context.account, userLocation: .peer(arguments.message.id.peerId), photoReference: imageReference, blurred: hasSpoiler)
                 } else if let fileReference = updatedMediaReference.concrete(TelegramMediaFile.self) {
                     if fileReference.media.isVideo {
-                        updateImageSignal = chatMessageVideoThumbnail(account: arguments.context.account, fileReference: fileReference)
+                        updateImageSignal = chatMessageVideoThumbnail(account: arguments.context.account, userLocation: .peer(arguments.message.id.peerId), fileReference: fileReference, blurred: hasSpoiler)
                     } else if let iconImageRepresentation = smallestImageRepresentation(fileReference.media.previewRepresentations) {
-                        updateImageSignal = chatWebpageSnippetFile(account: arguments.context.account, mediaReference: fileReference.abstract, representation: iconImageRepresentation)
+                        updateImageSignal = chatWebpageSnippetFile(account: arguments.context.account, userLocation: .peer(arguments.message.id.peerId), mediaReference: fileReference.abstract, representation: iconImageRepresentation)
                     }
                 }
             }
@@ -328,7 +346,7 @@ class ChatMessageReplyInfoNode: ASDisplayNode {
                     if let current = node.dustNode {
                         dustNode = current
                     } else {
-                        dustNode = InvisibleInkDustNode(textNode: nil)
+                        dustNode = InvisibleInkDustNode(textNode: nil, enableAnimations: arguments.context.sharedContext.energyUsageSettings.fullTranslucency)
                         dustNode.isUserInteractionEnabled = false
                         node.dustNode = dustNode
                         node.contentNode.insertSubnode(dustNode, aboveSubnode: textNode.textNode)

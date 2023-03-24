@@ -47,6 +47,119 @@ public enum MessageContentKind: Equatable {
     case dice(String)
     case invoice(String)
     
+    public func isSemanticallyEqual(to other: MessageContentKind) -> Bool {
+        switch self {
+        case .text:
+            if case .text = other {
+                return true
+            } else {
+                return false
+            }
+        case .image:
+            if case .image = other {
+                return true
+            } else {
+                return false
+            }
+        case .video:
+            if case .video = other {
+                return true
+            } else {
+                return false
+            }
+        case .videoMessage:
+            if case .videoMessage = other {
+                return true
+            } else {
+                return false
+            }
+        case .audioMessage:
+            if case .audioMessage = other {
+                return true
+            } else {
+                return false
+            }
+        case .sticker:
+            if case .sticker = other {
+                return true
+            } else {
+                return false
+            }
+        case .animation:
+            if case .animation = other {
+                return true
+            } else {
+                return false
+            }
+        case .file:
+            if case .file = other {
+                return true
+            } else {
+                return false
+            }
+        case .contact:
+            if case .contact = other {
+                return true
+            } else {
+                return false
+            }
+        case .game:
+            if case .game = other {
+                return true
+            } else {
+                return false
+            }
+        case .location:
+            if case .location = other {
+                return true
+            } else {
+                return false
+            }
+        case .liveLocation:
+            if case .liveLocation = other {
+                return true
+            } else {
+                return false
+            }
+        case .expiredImage:
+            if case .expiredImage = other {
+                return true
+            } else {
+                return false
+            }
+        case .expiredVideo:
+            if case .expiredVideo = other {
+                return true
+            } else {
+                return false
+            }
+        case .poll:
+            if case .poll = other {
+                return true
+            } else {
+                return false
+            }
+        case .restricted:
+            if case .restricted = other {
+                return true
+            } else {
+                return false
+            }
+        case .dice:
+            if case .dice = other {
+                return true
+            } else {
+                return false
+            }
+        case .invoice:
+            if case .invoice = other {
+                return true
+            } else {
+                return false
+            }
+        }
+    }
+    
     public var key: MessageContentKindKey {
         switch self {
         case .text:
@@ -205,7 +318,7 @@ public func mediaContentKind(_ media: EngineMedia, message: EngineMessage? = nil
         }
     case .action:
         if let message = message, let strings = strings, let nameDisplayOrder = nameDisplayOrder, let accountPeerId = accountPeerId {
-            return .text(NSAttributedString(string: plainServiceMessageString(strings: strings, nameDisplayOrder: nameDisplayOrder, dateTimeFormat: dateTimeFormat ?? PresentationDateTimeFormat(timeFormat: .military, dateFormat: .dayFirst, dateSeparator: ".", dateSuffix: "", requiresFullYear: false, decimalSeparator: ".", groupingSeparator: ""), message: message, accountPeerId: accountPeerId, forChatList: false)?.0 ?? ""))
+            return .text(NSAttributedString(string: plainServiceMessageString(strings: strings, nameDisplayOrder: nameDisplayOrder, dateTimeFormat: dateTimeFormat ?? PresentationDateTimeFormat(timeFormat: .military, dateFormat: .dayFirst, dateSeparator: ".", dateSuffix: "", requiresFullYear: false, decimalSeparator: ".", groupingSeparator: ""), message: message, accountPeerId: accountPeerId, forChatList: false, forForumOverview: false)?.0 ?? ""))
         } else {
             return nil
         }
@@ -305,7 +418,7 @@ public func foldLineBreaks(_ text: NSAttributedString) -> NSAttributedString {
     while true {
         if let range = remainingString.string.range(of: "\n") {
             let mappedRange = NSRange(range, in: remainingString.string)
-            lines.append(remainingString.attributedSubstring(from: NSRange(location: 0, length: mappedRange.upperBound)))
+            lines.append(remainingString.attributedSubstring(from: NSRange(location: 0, length: mappedRange.upperBound - 1)))
             remainingString.replaceCharacters(in: NSRange(location: 0, length: mappedRange.upperBound), with: "")
         } else {
             if lines.isEmpty {

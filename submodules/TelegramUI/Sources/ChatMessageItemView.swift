@@ -9,6 +9,8 @@ import LocalizedPeerData
 import ContextUI
 import ChatListUI
 import TelegramPresentationData
+import SwiftSignalKit
+import ChatControllerInteraction
 
 struct ChatMessageItemWidthFill {
     var compactInset: CGFloat
@@ -125,7 +127,7 @@ func chatMessageItemLayoutConstants(_ constants: (ChatMessageItemLayoutConstants
     let textInset: CGFloat = min(maxInset, ceil(maxInset * radiusTransition + minInset * (1.0 - radiusTransition)))
     result.text.bubbleInsets.left = textInset
     result.text.bubbleInsets.right = textInset
-    result.instantVideo.dimensions = min(params.width, params.availableHeight) > 320.0 ? constants.1.instantVideo.dimensions : constants.0.instantVideo.dimensions
+    result.instantVideo.dimensions = params.width > 320.0 ? constants.1.instantVideo.dimensions : constants.0.instantVideo.dimensions
     return result
 }
 
@@ -206,12 +208,13 @@ final class ChatMessageAccessibilityData {
             if let chatPeer = message.peers[item.message.id.peerId] {
                 let authorName = message.author.flatMap(EnginePeer.init)?.displayTitle(strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder)
                 
-                let (_, _, messageText, _, _) = chatListItemStrings(strings: item.presentationData.strings, nameDisplayOrder: item.presentationData.nameDisplayOrder, dateTimeFormat: item.presentationData.dateTimeFormat, messages: [EngineMessage(message)], chatPeer: EngineRenderedPeer(peer: EnginePeer(chatPeer)), accountPeerId: item.context.account.peerId)
+                let (_, _, messageText, _, _) = chatListItemStrings(strings: item.presentationData.strings, nameDisplayOrder: item.presentationData.nameDisplayOrder, dateTimeFormat: item.presentationData.dateTimeFormat, contentSettings: item.context.currentContentSettings.with { $0 }, messages: [EngineMessage(message)], chatPeer: EngineRenderedPeer(peer: EnginePeer(chatPeer)), accountPeerId: item.context.account.peerId)
                 
                 var text = messageText
                 
                 loop: for media in message.media {
                     if let _ = media as? TelegramMediaImage {
+                        traits.insert(.image)
                         if isIncoming {
                             if announceIncomingAuthors, let authorName = authorName {
                                 label = item.presentationData.strings.VoiceOver_Chat_PhotoFrom(authorName).string
@@ -229,6 +232,9 @@ final class ChatMessageAccessibilityData {
                         }
                     } else if let file = media as? TelegramMediaFile {
                         var isSpecialFile = false
+                        
+                        let isVideo = file.isInstantVideo
+                        
                         for attribute in file.attributes {
                             switch attribute {
                                 case let .Sticker(displayText, _, _):
@@ -256,6 +262,9 @@ final class ChatMessageAccessibilityData {
                                         }
                                     }
                                 case let .Audio(isVoice, duration, title, performer, _):
+                                    if isVideo {
+                                        continue
+                                    }
                                     isSpecialFile = true
                                     if isSelected == nil {
                                         hint = item.presentationData.strings.VoiceOver_Chat_PlayHint
@@ -541,12 +550,37 @@ final class ChatMessageAccessibilityData {
                 let dateString = DateFormatter.localizedString(from: Date(timeIntervalSince1970: Double(message.timestamp)), dateStyle: .medium, timeStyle: .short)
                 
                 result += "\n\(dateString)"
-                if !isIncoming && item.read && !isReply {
+                if !isIncoming && !isReply {
                     result += "\n"
-                    if announceIncomingAuthors {
-                        result += item.presentationData.strings.VoiceOver_Chat_SeenByRecipients
+                    if item.sending {
+                        result += item.presentationData.strings.VoiceOver_Chat_Sending
+                    } else if item.failed {
+                        result += item.presentationData.strings.VoiceOver_Chat_Failed
                     } else {
-                        result += item.presentationData.strings.VoiceOver_Chat_SeenByRecipient
+                        if item.read {
+                            if announceIncomingAuthors {
+                                result += item.presentationData.strings.VoiceOver_Chat_SeenByRecipients
+                            } else {
+                                result += item.presentationData.strings.VoiceOver_Chat_SeenByRecipient
+                            }
+                        }
+                        for attribute in message.attributes {
+                            if let attribute = attribute as? ConsumableContentMessageAttribute {
+                                if !attribute.consumed {
+                                    if announceIncomingAuthors {
+                                        result += item.presentationData.strings.VoiceOver_Chat_NotPlayedByRecipients
+                                    } else {
+                                        result += item.presentationData.strings.VoiceOver_Chat_NotPlayedByRecipient
+                                    }
+                                } else {
+                                    if announceIncomingAuthors {
+                                        result += item.presentationData.strings.VoiceOver_Chat_PlayedByRecipients
+                                    } else {
+                                        result += item.presentationData.strings.VoiceOver_Chat_PlayedByRecipient
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 value = result
@@ -570,6 +604,7 @@ final class ChatMessageAccessibilityData {
         }
         
         var (label, value) = dataForMessage(item.message, false)
+        var replyValue: String?
         
         for attribute in item.message.attributes {
             if let attribute = attribute as? TextEntitiesMessageAttribute {
@@ -610,8 +645,8 @@ final class ChatMessageAccessibilityData {
                     replyLabel = item.presentationData.strings.VoiceOver_Chat_ReplyToYourMessage
                 }
                 
-//                let (replyMessageLabel, replyMessageValue) = dataForMessage(replyMessage, true)
-//                replyLabel += "\(replyLabel): \(replyMessageLabel), \(replyMessageValue)"
+                let (_, replyMessageValue) = dataForMessage(replyMessage, true)
+                replyValue = replyMessageValue
                 
                 label = "\(replyLabel) . \(label)"
             }
@@ -661,6 +696,10 @@ final class ChatMessageAccessibilityData {
                 customActions.append(ChatMessageAccessibilityCustomAction(name: item.presentationData.strings.VoiceOver_MessageContextReply, target: nil, selector: #selector(self.noop), action: .reply))
             }
             customActions.append(ChatMessageAccessibilityCustomAction(name: item.presentationData.strings.VoiceOver_MessageContextOpenMessageMenu, target: nil, selector: #selector(self.noop), action: .options))
+        }
+        
+        if let replyValue {
+            value = "\(value). \(item.presentationData.strings.VoiceOver_Chat_ReplyingToMessage(replyValue).string)"
         }
         
         self.label = label
@@ -851,9 +890,16 @@ public class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol 
                 case .setupPoll:
                     break
                 case let .openUserProfile(peerId):
-                    item.controllerInteraction.openPeer(peerId, .info, nil, false, nil)
+                    let _ = (item.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
+                    |> deliverOnMainQueue).start(next: { peer in
+                        if let peer = peer {
+                            item.controllerInteraction.openPeer(peer, .info, nil, .default)
+                        }
+                    })
                 case let .openWebView(url, simple):
-                    item.controllerInteraction.openWebView(button.title, url, simple, false)
+                    item.controllerInteraction.openWebView(button.title, url, simple, .generic)
+                case .requestPeer:
+                    break
             }
         }
     }
@@ -904,5 +950,9 @@ public class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol 
     }
     
     func unreadMessageRangeUpdated() {
+    }
+    
+    public func contentFrame() -> CGRect {
+        return self.bounds
     }
 }

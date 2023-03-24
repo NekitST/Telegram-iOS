@@ -1064,6 +1064,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
             self.switchCameraButton.isUserInteractionEnabled = false
             self.leaveButton = CallControllerButtonItemNode()
             self.actionButton = VoiceChatActionButton()
+            self.actionButton.animationsEnabled = sharedContext.energyUsageSettings.fullTranslucency
             
             if self.isScheduling {
                 self.cameraButton.alpha = 0.0
@@ -1254,7 +1255,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                                 } else {
                                     text = strongSelf.presentationData.strings.VoiceChat_InvitedPeerText(peer.displayTitle(strings: strongSelf.presentationData.strings, displayOrder: strongSelf.presentationData.nameDisplayOrder)).string
                                 }
-                                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: EnginePeer(participant.peer), text: text, action: nil), action: { _ in return false })
+                                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: EnginePeer(participant.peer), text: text, action: nil, duration: 3), action: { _ in return false })
                             }
                         } else {
                             if case let .channel(groupPeer) = groupPeer, let listenerLink = inviteLinks?.listenerLink, !groupPeer.hasPermission(.inviteMembers) {
@@ -1362,7 +1363,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                                                 } else {
                                                     text = strongSelf.presentationData.strings.VoiceChat_InvitedPeerText(peer.displayTitle(strings: strongSelf.presentationData.strings, displayOrder: strongSelf.presentationData.nameDisplayOrder)).string
                                                 }
-                                                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: peer, text: text, action: nil), action: { _ in return false })
+                                                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: peer, text: text, action: nil, duration: 3), action: { _ in return false })
                                             }
                                         }))
                                     } else if case let .legacyGroup(groupPeer) = groupPeer {
@@ -1430,7 +1431,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                                                 } else {
                                                     text = strongSelf.presentationData.strings.VoiceChat_InvitedPeerText(peer.displayTitle(strings: strongSelf.presentationData.strings, displayOrder: strongSelf.presentationData.nameDisplayOrder)).string
                                                 }
-                                                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: peer, text: text, action: nil), action: { _ in return false })
+                                                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: peer, text: text, action: nil, duration: 3), action: { _ in return false })
                                             }
                                         }))
                                     }
@@ -1694,7 +1695,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                             let context = strongSelf.context
                             strongSelf.controller?.dismiss(completion: {
                                 Queue.mainQueue().after(0.3) {
-                                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: peer.id), keepStack: .always, purposefulAction: {}, peekData: nil))
+                                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(EnginePeer(peer)), keepStack: .always, purposefulAction: {}, peekData: nil))
                                 }
                             })
                         
@@ -2262,7 +2263,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                         return
                     }
                     let text = strongSelf.presentationData.strings.VoiceChat_PeerJoinedText(EnginePeer(event.peer).displayTitle(strings: strongSelf.presentationData.strings, displayOrder: strongSelf.presentationData.nameDisplayOrder)).string
-                    strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: EnginePeer(event.peer), text: text, action: nil), action: { _ in return false })
+                    strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: EnginePeer(event.peer), text: text, action: nil, duration: 3), action: { _ in return false })
                 }
             }))
             
@@ -2277,7 +2278,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                 } else {
                     text = strongSelf.presentationData.strings.VoiceChat_DisplayAsSuccess(EnginePeer(peer).displayTitle(strings: strongSelf.presentationData.strings, displayOrder: strongSelf.presentationData.nameDisplayOrder)).string
                 }
-                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: EnginePeer(peer), text: text, action: nil), action: { _ in return false })
+                strongSelf.presentUndoOverlay(content: .invitedToVoiceChat(context: strongSelf.context, peer: EnginePeer(peer), text: text, action: nil, duration: 3), action: { _ in return false })
             }))
 
             self.stateVersionDisposable.set((self.call.stateVersion
@@ -2658,6 +2659,9 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                                 if let strongSelf = self {
                                     strongSelf.call.setShouldBeRecording(false, title: nil, videoOrientation: nil)
 
+                                    Queue.mainQueue().after(0.88) {
+                                        strongSelf.hapticFeedback.success()
+                                    }
                                     
                                     let text: String
                                     if let channel = strongSelf.peer as? TelegramChannel, case .broadcast = channel.info {
@@ -2665,13 +2669,18 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                                     } else {
                                         text = strongSelf.presentationData.strings.VideoChat_RecordingSaved
                                     }
-                                    
                                     strongSelf.presentUndoOverlay(content: .forward(savedMessages: true, text: text), action: { [weak self] value in
                                         if case .info = value, let strongSelf = self, let navigationController = strongSelf.controller?.navigationController as? NavigationController {
                                             let context = strongSelf.context
                                             strongSelf.controller?.dismiss(completion: {
                                                 Queue.mainQueue().justDispatch {
-                                                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(id: context.account.peerId), keepStack: .always, purposefulAction: {}, peekData: nil))
+                                                    let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: context.account.peerId))
+                                                    |> deliverOnMainQueue).start(next: { peer in
+                                                        guard let peer = peer else {
+                                                            return
+                                                        }
+                                                        context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(peer), keepStack: .always, purposefulAction: {}, peekData: nil))
+                                                    })
                                                 }
                                             })
                                             
@@ -2854,7 +2863,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
             items.append(.separator)
             items.append(.action(ContextMenuActionItem(text: self.presentationData.strings.Common_Back, icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Back"), color: theme.actionSheet.primaryTextColor)
-            }, action: { [weak self] (c, _) in
+            }, iconPosition: .left, action: { [weak self] (c, _) in
                 guard let strongSelf = self else {
                     return
                 }
@@ -2949,7 +2958,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                 items.append(.separator)
                 items.append(.action(ContextMenuActionItem(text: strongSelf.presentationData.strings.Common_Back, icon: { theme in
                     return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Back"), color: theme.actionSheet.primaryTextColor)
-                }, action: { (c, _) in
+                }, iconPosition: .left, action: { (c, _) in
                     guard let strongSelf = self else {
                         return
                     }
@@ -2995,7 +3004,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                 items.append(.separator)
                 items.append(.action(ContextMenuActionItem(text: self.presentationData.strings.Common_Back, icon: { theme in
                     return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Back"), color: theme.actionSheet.primaryTextColor)
-                }, action: { [weak self] (c, _) in
+                }, iconPosition: .left, action: { [weak self] (c, _) in
                     guard let strongSelf = self else {
                         return
                     }
@@ -4749,8 +4758,9 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                 }
             }
                                     
-            let buttonHeight = self.scheduleCancelButton.updateLayout(width: size.width - 32.0, transition: .immediate)
-            self.scheduleCancelButton.frame = CGRect(x: 16.0, y: 137.0, width: size.width - 32.0, height: buttonHeight)
+            let buttonWidth = min(size.width - 32.0, centralButtonSize.width)
+            let buttonHeight = self.scheduleCancelButton.updateLayout(width: buttonWidth, transition: .immediate)
+            self.scheduleCancelButton.frame = CGRect(x: floorToScreenPixels(centerButtonFrame.midX - buttonWidth / 2.0), y: 137.0, width: buttonWidth, height: buttonHeight)
             
             if self.actionButton.supernode === self.bottomPanelNode {
                 transition.updateFrame(node: self.actionButton, frame: thirdButtonFrame, completion: transition.isAnimated ? { [weak self] _ in
@@ -6146,22 +6156,10 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                 if !peer.profileImageRepresentations.isEmpty {
                     hasPhotos = true
                 }
-                
-                let paintStickersContext = LegacyPaintStickersContext(context: strongSelf.context)
-//                paintStickersContext.presentStickersController = { completion in
-//                    let controller = DrawingStickersScreen(context: strongSelf.context, selectSticker: { fileReference, node, rect in
-//                        let coder = PostboxEncoder()
-//                        coder.encodeRootObject(fileReference.media)
-//                        completion?(coder.makeData(), fileReference.media.isAnimatedSticker, node.view, rect)
-//                        return true
-//                    })
-//                    strongSelf.controller?.present(controller, in: .window(.root))
-//                    return controller
-//                }
-                
-                let mixin = TGMediaAvatarMenuMixin(context: legacyController.context, parentController: emptyController, hasSearchButton: true, hasDeleteButton: hasPhotos && !fromGallery, hasViewButton: false, personalPhoto: peerId.namespace == Namespaces.Peer.CloudUser, isVideo: false, saveEditedPhotos: false, saveCapturedMedia: false, signup: false)!
+                                
+                let mixin = TGMediaAvatarMenuMixin(context: legacyController.context, parentController: emptyController, hasSearchButton: true, hasDeleteButton: hasPhotos && !fromGallery, hasViewButton: false, personalPhoto: peerId.namespace == Namespaces.Peer.CloudUser, isVideo: false, saveEditedPhotos: false, saveCapturedMedia: false, signup: false, forum: false, title: nil, isSuggesting: false)!
                 mixin.forceDark = true
-                mixin.stickersContext = paintStickersContext
+                mixin.stickersContext = LegacyPaintStickersContext(context: strongSelf.context)
                 let _ = strongSelf.currentAvatarMixin.swap(mixin)
                 mixin.requestSearchController = { [weak self] assetsController in
                     guard let strongSelf = self else {
@@ -6245,13 +6243,13 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
             
             let resource = LocalFileMediaResource(fileId: Int64.random(in: Int64.min ... Int64.max))
             self.call.account.postbox.mediaBox.storeResourceData(resource.id, data: data)
-            let representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 640, height: 640), resource: resource, progressiveSizes: [], immediateThumbnailData: nil)
+            let representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 640, height: 640), resource: resource, progressiveSizes: [], immediateThumbnailData: nil, hasVideo: false, isPersonal: false)
             
             self.currentUpdatingAvatar = representation
             self.updateAvatarPromise.set(.single((representation, 0.0)))
 
             let postbox = self.call.account.postbox
-            let signal = peerId.namespace == Namespaces.Peer.CloudUser ? self.call.accountContext.engine.accountData.updateAccountPhoto(resource: resource, videoResource: nil, videoStartTimestamp: nil, mapResourceToAvatarSizes: { resource, representations in
+            let signal = peerId.namespace == Namespaces.Peer.CloudUser ? self.call.accountContext.engine.accountData.updateAccountPhoto(resource: resource, videoResource: nil, videoStartTimestamp: nil, markup: nil, mapResourceToAvatarSizes: { resource, representations in
                 return mapResourceToAvatarSizes(postbox: postbox, resource: resource, representations: representations)
             }) : self.call.accountContext.engine.peers.updatePeerPhoto(peerId: peerId, photo: self.call.accountContext.engine.peers.uploadedPeerPhoto(resource: resource), mapResourceToAvatarSizes: { resource, representations in
                 return mapResourceToAvatarSizes(postbox: postbox, resource: resource, representations: representations)
@@ -6280,7 +6278,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
             
             let photoResource = LocalFileMediaResource(fileId: Int64.random(in: Int64.min ... Int64.max))
             self.context.account.postbox.mediaBox.storeResourceData(photoResource.id, data: data)
-            let representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 640, height: 640), resource: photoResource, progressiveSizes: [], immediateThumbnailData: nil)
+            let representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 640, height: 640), resource: photoResource, progressiveSizes: [], immediateThumbnailData: nil, hasVideo: false, isPersonal: false)
             
             self.currentUpdatingAvatar = representation
             self.updateAvatarPromise.set(.single((representation, 0.0)))
@@ -6300,11 +6298,11 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                         return nil
                     }
                 }
+                
+                let tempFile = EngineTempBox.shared.tempFile(fileName: "video.mp4")
                 let uploadInterface = LegacyLiveUploadInterface(context: context)
                 let signal: SSignal
-                if let asset = asset as? AVAsset {
-                    signal = TGMediaVideoConverter.convert(asset, adjustments: adjustments, watcher: uploadInterface, entityRenderer: entityRenderer)!
-                } else if let url = asset as? URL, let data = try? Data(contentsOf: url, options: [.mappedRead]), let image = UIImage(data: data), let entityRenderer = entityRenderer {
+                if let url = asset as? URL, url.absoluteString.hasSuffix(".jpg"), let data = try? Data(contentsOf: url, options: [.mappedRead]), let image = UIImage(data: data), let entityRenderer = entityRenderer {
                     let durationSignal: SSignal = SSignal(generator: { subscriber in
                         let disposable = (entityRenderer.duration()).start(next: { duration in
                             subscriber.putNext(duration)
@@ -6317,12 +6315,14 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                     })
                     signal = durationSignal.map(toSignal: { duration -> SSignal in
                         if let duration = duration as? Double {
-                            return TGMediaVideoConverter.renderUIImage(image, duration: duration, adjustments: adjustments, watcher: nil, entityRenderer: entityRenderer)!
+                            return TGMediaVideoConverter.renderUIImage(image, duration: duration, adjustments: adjustments, path: tempFile.path, watcher: nil, entityRenderer: entityRenderer)!
                         } else {
                             return SSignal.single(nil)
                         }
                     })
                    
+                } else if let asset = asset as? AVAsset {
+                    signal = TGMediaVideoConverter.convert(asset, adjustments: adjustments, path: tempFile.path, watcher: uploadInterface, entityRenderer: entityRenderer)!
                 } else {
                     signal = SSignal.complete()
                 }
@@ -6348,6 +6348,8 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
                                 }
                                 account.postbox.mediaBox.storeResourceData(resource.id, data: data, synchronous: true)
                                 subscriber.putNext(resource)
+                                
+                                EngineTempBox.shared.dispose(tempFile)
                             }
                         }
                         subscriber.putCompletion()
@@ -6371,7 +6373,7 @@ public final class VoiceChatControllerImpl: ViewController, VoiceChatController 
             self.updateAvatarDisposable.set((signal
             |> mapToSignal { videoResource -> Signal<UpdatePeerPhotoStatus, UploadPeerPhotoError> in
                 if peerId.namespace == Namespaces.Peer.CloudUser {
-                    return context.engine.accountData.updateAccountPhoto(resource: photoResource, videoResource: videoResource, videoStartTimestamp: videoStartTimestamp, mapResourceToAvatarSizes: { resource, representations in
+                    return context.engine.accountData.updateAccountPhoto(resource: photoResource, videoResource: videoResource, videoStartTimestamp: videoStartTimestamp, markup: nil, mapResourceToAvatarSizes: { resource, representations in
                         return mapResourceToAvatarSizes(postbox: account.postbox, resource: resource, representations: representations)
                     })
                 } else {

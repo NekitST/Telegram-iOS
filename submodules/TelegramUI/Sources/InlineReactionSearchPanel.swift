@@ -14,6 +14,7 @@ import ContextUI
 import ChatPresentationInterfaceState
 import PremiumUI
 import UndoUI
+import ChatControllerInteraction
 
 private final class InlineReactionSearchStickersNode: ASDisplayNode, UIScrollViewDelegate {
     private final class DisplayItem {
@@ -197,7 +198,7 @@ private final class InlineReactionSearchStickersNode: ASDisplayNode, UIScrollVie
                                     }
                                 }))
                             )
-                            return (itemNode.view, itemNode.bounds, StickerPreviewPeekContent(account: strongSelf.context.account, theme: strongSelf.theme, strings: strongSelf.strings, item: .pack(item.file), menu: menuItems, openPremiumIntro: { [weak self] in
+                            return (itemNode.view, itemNode.bounds, StickerPreviewPeekContent(context: strongSelf.context, theme: strongSelf.theme, strings: strongSelf.strings, item: .pack(item.file), menu: menuItems, openPremiumIntro: { [weak self] in
                                 guard let strongSelf = self, let controllerInteraction = strongSelf.getControllerInteraction?() else {
                                     return
                                 }
@@ -430,7 +431,7 @@ private final class InlineReactionSearchStickersNode: ASDisplayNode, UIScrollVie
                     itemNode = current
                 } else {
                     let item = HorizontalStickerGridItem(
-                        account: self.context.account,
+                        context: self.context,
                         file: item.file,
                         theme: self.theme,
                         isPreviewed: { [weak self] item in

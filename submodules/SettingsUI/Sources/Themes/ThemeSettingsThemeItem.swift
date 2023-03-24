@@ -172,11 +172,18 @@ private func createThemeImage(theme: PresentationTheme) -> Signal<(TransformImag
     return .single(theme)
     |> map { theme -> (TransformImageArguments) -> DrawingContext? in
         return { arguments in
-            let context = DrawingContext(size: arguments.drawingSize, scale: arguments.scale ?? 0.0, clear: true)
+            guard let context = DrawingContext(size: arguments.drawingSize, scale: arguments.scale ?? 0.0, clear: true) else {
+                return nil
+            }
             let drawingRect = arguments.drawingRect
             
             context.withContext { c in
                 c.clear(CGRect(origin: CGPoint(), size: drawingRect.size))
+                
+                c.setFillColor(theme.list.plainBackgroundColor.cgColor)
+                let path = UIBezierPath(roundedRect: drawingRect, cornerRadius: arguments.corners.topLeft.radius)
+                c.addPath(path.cgPath)
+                c.fillPath()
                 
                 c.translateBy(x: drawingRect.width / 2.0, y: drawingRect.height / 2.0)
                 c.scaleBy(x: 1.0, y: -1.0)
@@ -200,6 +207,8 @@ private final class ThemeSettingsThemeItemIconNode : ListViewItemNode {
     private let titleNode: TextNode
     var snapshotView: UIView?
     
+    private let activateAreaNode: AccessibilityAreaNode
+    
     var item: ThemeSettingsThemeIconItem?
 
     init() {
@@ -215,13 +224,17 @@ private final class ThemeSettingsThemeItemIconNode : ListViewItemNode {
 
         self.titleNode = TextNode()
         self.titleNode.isUserInteractionEnabled = false
-
+        
+        self.activateAreaNode = AccessibilityAreaNode()
+        
         super.init(layerBacked: false, dynamicBounce: false, rotated: false, seeThrough: false)
 
         self.addSubnode(self.containerNode)
         self.containerNode.addSubnode(self.imageNode)
         self.containerNode.addSubnode(self.overlayNode)
         self.containerNode.addSubnode(self.titleNode)
+        
+        self.addSubnode(self.activateAreaNode)
 
         self.containerNode.activated = { [weak self] gesture, _ in
             guard let strongSelf = self, let item = strongSelf.item else {
@@ -287,7 +300,7 @@ private final class ThemeSettingsThemeItemIconNode : ListViewItemNode {
                         strongSelf.containerNode.isGestureEnabled = true
                     }
                     if updatedTheme || updatedSelected {
-                        strongSelf.overlayNode.image = generateBorderImage(theme: item.theme, bordered: true, selected: item.selected)
+                        strongSelf.overlayNode.image = generateBorderImage(theme: item.theme, bordered: false, selected: item.selected)
                     }
                     
                     strongSelf.containerNode.frame = CGRect(origin: CGPoint(), size: itemLayout.contentSize)
@@ -301,6 +314,15 @@ private final class ThemeSettingsThemeItemIconNode : ListViewItemNode {
                     
                     strongSelf.overlayNode.frame = CGRect(origin: CGPoint(x: 9.0, y: 13.0), size: CGSize(width: 100.0, height: 64.0))
                     strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: 0.0, y: 88.0), size: CGSize(width: itemLayout.contentSize.width, height: 16.0))
+                    
+                    strongSelf.activateAreaNode.accessibilityLabel = item.title
+                    if item.selected {
+                        strongSelf.activateAreaNode.accessibilityTraits = [.button, .selected]
+                    } else {
+                        strongSelf.activateAreaNode.accessibilityTraits = [.button]
+                    }
+                    
+                    strongSelf.activateAreaNode.frame = CGRect(origin: .zero, size: itemLayout.size)
                 }
             })
         }

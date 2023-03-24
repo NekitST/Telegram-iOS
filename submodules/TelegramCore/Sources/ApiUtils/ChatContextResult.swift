@@ -352,6 +352,15 @@ public struct ChatContextResultSwitchPeer: Equatable, Codable {
     }
 }
 
+public struct ChatContextResultWebView: Equatable, Codable {
+    public let text: String
+    public let url: String
+    
+    public static func ==(lhs: ChatContextResultWebView, rhs: ChatContextResultWebView) -> Bool {
+        return lhs.text == rhs.text && lhs.url == rhs.url
+    }
+}
+
 public final class ChatContextResultCollection: Equatable, Codable {
     public struct GeoPoint: Equatable, Codable {
         public let latitude: Double
@@ -371,10 +380,11 @@ public final class ChatContextResultCollection: Equatable, Codable {
     public let nextOffset: String?
     public let presentation: ChatContextResultCollectionPresentation
     public let switchPeer: ChatContextResultSwitchPeer?
+    public let webView: ChatContextResultWebView?
     public let results: [ChatContextResult]
     public let cacheTimeout: Int32
     
-    public init(botId: PeerId, peerId: PeerId, query: String, geoPoint: ChatContextResultCollection.GeoPoint?, queryId: Int64, nextOffset: String?, presentation: ChatContextResultCollectionPresentation, switchPeer: ChatContextResultSwitchPeer?, results: [ChatContextResult], cacheTimeout: Int32) {
+    public init(botId: PeerId, peerId: PeerId, query: String, geoPoint: ChatContextResultCollection.GeoPoint?, queryId: Int64, nextOffset: String?, presentation: ChatContextResultCollectionPresentation, switchPeer: ChatContextResultSwitchPeer?, webView: ChatContextResultWebView?, results: [ChatContextResult], cacheTimeout: Int32) {
         self.botId = botId
         self.peerId = peerId
         self.query = query
@@ -383,6 +393,7 @@ public final class ChatContextResultCollection: Equatable, Codable {
         self.nextOffset = nextOffset
         self.presentation = presentation
         self.switchPeer = switchPeer
+        self.webView = webView
         self.results = results
         self.cacheTimeout = cacheTimeout
     }
@@ -410,6 +421,9 @@ public final class ChatContextResultCollection: Equatable, Codable {
             return false
         }
         if lhs.switchPeer != rhs.switchPeer {
+            return false
+        }
+        if lhs.webView != rhs.webView {
             return false
         }
         if lhs.results != rhs.results {
@@ -478,7 +492,7 @@ extension ChatContextResultMessage {
                 if let replyMarkup = replyMarkup {
                     parsedReplyMarkup = ReplyMarkupMessageAttribute(apiMarkup: replyMarkup)
                 }
-                self = .invoice(media: TelegramMediaInvoice(title: title, description: description, photo: photo.flatMap(TelegramMediaWebFile.init), receiptMessageId: nil, currency: currency, totalAmount: totalAmount, startParam: "", extendedMedia: nil, flags: parsedFlags), replyMarkup: parsedReplyMarkup)
+            self = .invoice(media: TelegramMediaInvoice(title: title, description: description, photo: photo.flatMap(TelegramMediaWebFile.init), receiptMessageId: nil, currency: currency, totalAmount: totalAmount, startParam: "", extendedMedia: nil, flags: parsedFlags, version: TelegramMediaInvoice.lastVersion), replyMarkup: parsedReplyMarkup)
         }
     }
 }
@@ -511,13 +525,26 @@ extension ChatContextResultSwitchPeer {
     }
 }
 
+extension ChatContextResultWebView {
+    init(apiSwitchWebView: Api.InlineBotWebView) {
+        switch apiSwitchWebView {
+            case let .inlineBotWebView(text, url):
+                self.init(text: text, url: url)
+        }
+    }
+}
+
 extension ChatContextResultCollection {
     convenience init(apiResults: Api.messages.BotResults, botId: PeerId, peerId: PeerId, query: String, geoPoint: (Double, Double)?) {
         switch apiResults {
-            case let .botResults(flags, queryId, nextOffset, switchPm, results, cacheTime, _):
+            case let .botResults(flags, queryId, nextOffset, switchPm, switchWebView, results, cacheTime, _):
                 var switchPeer: ChatContextResultSwitchPeer?
                 if let switchPm = switchPm {
                     switchPeer = ChatContextResultSwitchPeer(apiSwitchPeer: switchPm)
+                }
+                var webView: ChatContextResultWebView?
+                if let switchWebView = switchWebView {
+                    webView = ChatContextResultWebView(apiSwitchWebView: switchWebView)
                 }
                 let parsedResults = results.map({ ChatContextResult(apiResult: $0, queryId: queryId) })
                 /*.filter({ result in
@@ -531,7 +558,52 @@ extension ChatContextResultCollection {
                 let mappedGeoPoint = geoPoint.flatMap { geoPoint -> ChatContextResultCollection.GeoPoint in
                     return ChatContextResultCollection.GeoPoint(latitude: geoPoint.0, longitude: geoPoint.1)
                 }
-                self.init(botId: botId, peerId: peerId, query: query, geoPoint: mappedGeoPoint, queryId: queryId, nextOffset: nextOffset, presentation: (flags & (1 << 0) != 0) ? .media : .list, switchPeer: switchPeer, results: parsedResults, cacheTimeout: cacheTime)
+                self.init(botId: botId, peerId: peerId, query: query, geoPoint: mappedGeoPoint, queryId: queryId, nextOffset: nextOffset, presentation: (flags & (1 << 0) != 0) ? .media : .list, switchPeer: switchPeer, webView: webView, results: parsedResults, cacheTimeout: cacheTime)
+        }
+    }
+}
+
+public func requestContextResults(engine: TelegramEngine, botId: EnginePeer.Id, query: String, peerId: EnginePeer.Id, offset: String = "", existingResults: ChatContextResultCollection? = nil, incompleteResults: Bool = false, staleCachedResults: Bool = false, limit: Int = 60) -> Signal<RequestChatContextResultsResult?, NoError> {
+    return engine.messages.requestChatContextResults(botId: botId, peerId: peerId, query: query, offset: offset, incompleteResults: incompleteResults, staleCachedResults: staleCachedResults)
+    |> `catch` { error -> Signal<RequestChatContextResultsResult?, NoError> in
+        return .single(nil)
+    }
+    |> mapToSignal { resultsStruct -> Signal<RequestChatContextResultsResult?, NoError> in
+        let results = resultsStruct?.results
+        
+        var collection = existingResults
+        var updated: Bool = false
+        if let existingResults = existingResults, let results = results {
+            var newResults: [ChatContextResult] = []
+            var existingIds = Set<String>()
+            for result in existingResults.results {
+                newResults.append(result)
+                existingIds.insert(result.id)
+            }
+            for result in results.results {
+                if !existingIds.contains(result.id) {
+                    newResults.append(result)
+                    existingIds.insert(result.id)
+                    updated = true
+                }
+            }
+            collection = ChatContextResultCollection(botId: existingResults.botId, peerId: existingResults.peerId, query: existingResults.query, geoPoint: existingResults.geoPoint, queryId: results.queryId, nextOffset: results.nextOffset, presentation: existingResults.presentation, switchPeer: existingResults.switchPeer, webView: existingResults.webView, results: newResults, cacheTimeout: existingResults.cacheTimeout)
+        } else {
+            collection = results
+            updated = true
+        }
+        if let collection = collection, collection.results.count < limit, let nextOffset = collection.nextOffset, updated {
+            let nextResults = requestContextResults(engine: engine, botId: botId, query: query, peerId: peerId, offset: nextOffset, existingResults: collection, limit: limit)
+            if collection.results.count > 10 {
+                return .single(RequestChatContextResultsResult(results: collection, isStale: resultsStruct?.isStale ?? false))
+                |> then(nextResults)
+            } else {
+                return nextResults
+            }
+        } else if let collection = collection {
+            return .single(RequestChatContextResultsResult(results: collection, isStale: resultsStruct?.isStale ?? false))
+        } else {
+            return .single(nil)
         }
     }
 }

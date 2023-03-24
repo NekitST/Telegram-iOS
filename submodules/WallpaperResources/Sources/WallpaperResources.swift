@@ -88,9 +88,9 @@ public func wallpaperDatas(account: Account, accountManager: AccountManager<Tele
                 }
             } else {
                 let fetchedThumbnail: Signal<FetchResourceSourceType, FetchResourceError>
-                fetchedThumbnail = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: representations[smallestIndex].reference)
+                fetchedThumbnail = fetchedMediaResource(mediaBox: account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: representations[smallestIndex].reference)
                 
-                let fetchedFullSize = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: representations[largestIndex].reference)
+                let fetchedFullSize = fetchedMediaResource(mediaBox: account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: representations[largestIndex].reference)
                 
                 let thumbnailData: Signal<Data?, NoError>
 
@@ -215,30 +215,33 @@ public func wallpaperImage(account: Account, accountManager: AccountManager<Tele
                 let initialThumbnailContextFittingSize = fittedSize.fitted(CGSize(width: 90.0, height: 90.0))
 
                 let thumbnailContextSize = thumbnailSize.aspectFitted(initialThumbnailContextFittingSize)
-                let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0)
-                thumbnailContext.withFlippedContext { c in
-                    c.draw(fullSizeImageValue, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
-                }
-                telegramFastBlurMore(Int32(thumbnailContextSize.width), Int32(thumbnailContextSize.height), Int32(thumbnailContext.bytesPerRow), thumbnailContext.bytes)
-
-                var thumbnailContextFittingSize = CGSize(width: floor(arguments.drawingSize.width * 0.5), height: floor(arguments.drawingSize.width * 0.5))
-                if thumbnailContextFittingSize.width < 150.0 || thumbnailContextFittingSize.height < 150.0 {
-                    thumbnailContextFittingSize = thumbnailContextFittingSize.aspectFilled(CGSize(width: 150.0, height: 150.0))
-                }
-
-                if false, thumbnailContextFittingSize.width > thumbnailContextSize.width {
-                    let additionalContextSize = thumbnailContextFittingSize
-                    let additionalBlurContext = DrawingContext(size: additionalContextSize, scale: 1.0)
-                    additionalBlurContext.withFlippedContext { c in
-                        c.interpolationQuality = .default
-                        if let image = thumbnailContext.generateImage()?.cgImage {
-                            c.draw(image, in: CGRect(origin: CGPoint(), size: additionalContextSize))
-                        }
+                if let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0) {
+                    thumbnailContext.withFlippedContext { c in
+                        c.draw(fullSizeImageValue, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
                     }
-                    imageFastBlur(Int32(additionalContextSize.width), Int32(additionalContextSize.height), Int32(additionalBlurContext.bytesPerRow), additionalBlurContext.bytes)
-                    fullSizeImage = additionalBlurContext.generateImage()?.cgImage
-                } else {
-                    fullSizeImage = thumbnailContext.generateImage()?.cgImage
+                    telegramFastBlurMore(Int32(thumbnailContextSize.width), Int32(thumbnailContextSize.height), Int32(thumbnailContext.bytesPerRow), thumbnailContext.bytes)
+                    
+                    var thumbnailContextFittingSize = CGSize(width: floor(arguments.drawingSize.width * 0.5), height: floor(arguments.drawingSize.width * 0.5))
+                    if thumbnailContextFittingSize.width < 150.0 || thumbnailContextFittingSize.height < 150.0 {
+                        thumbnailContextFittingSize = thumbnailContextFittingSize.aspectFilled(CGSize(width: 150.0, height: 150.0))
+                    }
+                    
+                    if false, thumbnailContextFittingSize.width > thumbnailContextSize.width {
+                        let additionalContextSize = thumbnailContextFittingSize
+                        guard let additionalBlurContext = DrawingContext(size: additionalContextSize, scale: 1.0) else {
+                            return nil
+                        }
+                        additionalBlurContext.withFlippedContext { c in
+                            c.interpolationQuality = .default
+                            if let image = thumbnailContext.generateImage()?.cgImage {
+                                c.draw(image, in: CGRect(origin: CGPoint(), size: additionalContextSize))
+                            }
+                        }
+                        imageFastBlur(Int32(additionalContextSize.width), Int32(additionalContextSize.height), Int32(additionalBlurContext.bytesPerRow), additionalBlurContext.bytes)
+                        fullSizeImage = additionalBlurContext.generateImage()?.cgImage
+                    } else {
+                        fullSizeImage = thumbnailContext.generateImage()?.cgImage
+                    }
                 }
             }
             
@@ -254,7 +257,9 @@ public func wallpaperImage(account: Account, accountManager: AccountManager<Tele
                 let initialThumbnailContextFittingSize = fittedSize.fitted(CGSize(width: 90.0, height: 90.0))
                 
                 let thumbnailContextSize = thumbnailSize.aspectFitted(initialThumbnailContextFittingSize)
-                let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0)
+                guard let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0) else {
+                    return nil
+                }
                 thumbnailContext.withFlippedContext { c in
                     c.draw(thumbnailImage, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
                 }
@@ -267,7 +272,9 @@ public func wallpaperImage(account: Account, accountManager: AccountManager<Tele
                 
                 if false, thumbnailContextFittingSize.width > thumbnailContextSize.width {
                     let additionalContextSize = thumbnailContextFittingSize
-                    let additionalBlurContext = DrawingContext(size: additionalContextSize, scale: 1.0)
+                    guard let additionalBlurContext = DrawingContext(size: additionalContextSize, scale: 1.0) else {
+                        return nil
+                    }
                     additionalBlurContext.withFlippedContext { c in
                         c.interpolationQuality = .default
                         if let image = thumbnailContext.generateImage()?.cgImage {
@@ -282,7 +289,9 @@ public func wallpaperImage(account: Account, accountManager: AccountManager<Tele
             }
             
             if let blurredThumbnailImage = blurredThumbnailImage, fullSizeImage == nil {
-                let context = DrawingContext(size: blurredThumbnailImage.size, scale: blurredThumbnailImage.scale, clear: true)
+                guard let context = DrawingContext(size: blurredThumbnailImage.size, scale: blurredThumbnailImage.scale, clear: true) else {
+                    return nil
+                }
                 context.withFlippedContext { c in
                     c.setBlendMode(.copy)
                     if let cgImage = blurredThumbnailImage.cgImage {
@@ -294,7 +303,9 @@ public func wallpaperImage(account: Account, accountManager: AccountManager<Tele
                 return context
             }
             
-            let context = DrawingContext(size: arguments.drawingSize, clear: true)
+            guard let context = DrawingContext(size: arguments.drawingSize, clear: true) else {
+                return nil
+            }
             context.withFlippedContext { c in
                 c.setBlendMode(.copy)
                 if arguments.imageSize.width < arguments.boundingSize.width || arguments.imageSize.height < arguments.boundingSize.height {
@@ -325,18 +336,25 @@ public enum PatternWallpaperDrawMode {
 }
 
 public struct PatternWallpaperArguments: TransformImageCustomArguments {
+    public enum DisplayMode: Int32 {
+        case aspectFill
+        case aspectFit
+        case halfAspectFill
+    }
     let colors: [UIColor]
     let rotation: Int32?
     let preview: Bool
     let customPatternColor: UIColor?
     let bakePatternAlpha: CGFloat
+    let displayMode: DisplayMode
     
-    public init(colors: [UIColor], rotation: Int32?, customPatternColor: UIColor? = nil, preview: Bool = false, bakePatternAlpha: CGFloat = 1.0) {
+    public init(colors: [UIColor], rotation: Int32?, customPatternColor: UIColor? = nil, preview: Bool = false, bakePatternAlpha: CGFloat = 1.0, displayMode: DisplayMode = .aspectFill) {
         self.colors = colors
         self.rotation = rotation
         self.customPatternColor = customPatternColor
         self.preview = preview
         self.bakePatternAlpha = bakePatternAlpha
+        self.displayMode = displayMode
     }
     
     public func serialized() -> NSArray {
@@ -348,6 +366,7 @@ public struct PatternWallpaperArguments: TransformImageCustomArguments {
         }
         array.add(NSNumber(value: self.preview))
         array.add(NSNumber(value: Double(self.bakePatternAlpha)))
+        array.add(NSNumber(value: self.displayMode.rawValue))
         return array
     }
 }
@@ -384,7 +403,7 @@ private func patternWallpaperDatas(account: Account, accountManager: AccountMana
                 let loadedData: Data? = try? Data(contentsOf: URL(fileURLWithPath: maybeData.path), options: [])
                 return .single((loadedData, true))
             } else {
-                let fetchedFullSize = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: targetRepresentation.reference)
+                let fetchedFullSize = fetchedMediaResource(mediaBox: account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: targetRepresentation.reference)
 
                 let accountFullSizeData = Signal<(Data?, Bool), NoError> { subscriber in
                     let fetchedFullSizeDisposable = fetchedFullSize.start()
@@ -484,7 +503,9 @@ private func patternWallpaperImageInternal(fullSizeData: Data?, fullSizeComplete
                 let color = combinedColor.withAlphaComponent(1.0)
                 let intensity = combinedColor.alpha
                 
-                let context = DrawingContext(size: arguments.drawingSize, scale: scale, clear: true)
+                guard let context = DrawingContext(size: arguments.drawingSize, scale: scale, clear: true) else {
+                    return nil
+                }
                 context.withFlippedContext { c in
                     c.clear(arguments.drawingRect)
                     
@@ -526,12 +547,13 @@ private func patternWallpaperImageInternal(fullSizeData: Data?, fullSizeComplete
                         c.restoreGState()
                     }
 
+                    let displayMode = customArguments.displayMode
                     let overlayImage = generateImage(arguments.drawingRect.size, rotatedContext: { size, c in
                         c.clear(CGRect(origin: CGPoint(), size: size))
                         var image: UIImage?
                         if let fullSizeData = fullSizeData {
                             if mode == .screen {
-                                image = renderPreparedImage(fullSizeData, CGSize(width: size.width * context.scale, height: size.height * context.scale), .black, 1.0)
+                                image = renderPreparedImage(fullSizeData, CGSize(width: size.width * context.scale, height: size.height * context.scale), .black, 1.0, displayMode == .aspectFit)
                             } else {
                                 image = UIImage(data: fullSizeData)
                             }
@@ -553,38 +575,62 @@ private func patternWallpaperImageInternal(fullSizeData: Data?, fullSizeComplete
                             if abs(fittedSize.height - arguments.boundingSize.height).isLessThanOrEqualTo(CGFloat(1.0)) {
                                 fittedSize.height = arguments.boundingSize.height
                             }
-                            fittedSize = fittedSize.aspectFilled(arguments.drawingRect.size)
-
-                            let fittedRect = CGRect(origin: CGPoint(x: drawingRect.origin.x + (drawingRect.size.width - fittedSize.width) / 2.0, y: drawingRect.origin.y + (drawingRect.size.height - fittedSize.height) / 2.0), size: fittedSize)
-
+                            switch displayMode {
+                            case .aspectFill:
+                                fittedSize = fittedSize.aspectFilled(arguments.drawingRect.size)
+                            case .halfAspectFill:
+                                fittedSize = fittedSize.aspectFilled(arguments.drawingRect.size)
+                                fittedSize = CGSize(width: fittedSize.width * 0.5, height: fittedSize.height * 0.5)
+                            case .aspectFit:
+                                fittedSize = fittedSize.aspectFitted(arguments.drawingRect.size)
+                            }
+                            
                             c.interpolationQuality = customArguments.preview ? .low : .medium
-                            c.clip(to: fittedRect, mask: image.cgImage!)
+                            
+                            let drawTile: (CGRect) -> Void = { fittedRect in
+                                c.saveGState()
+                                c.clip(to: fittedRect, mask: image.cgImage!)
 
-                            if let customPatternColor = customArguments.customPatternColor {
-                                c.setFillColor(customPatternColor.cgColor)
-                                c.fill(CGRect(origin: CGPoint(), size: arguments.drawingRect.size))
-                            } else if colors.count >= 3 && customArguments.customPatternColor == nil {
-                                c.setFillColor(UIColor(white: 0.0, alpha: 0.5).cgColor)
-                                c.fill(CGRect(origin: CGPoint(), size: arguments.drawingRect.size))
-                            } else if colors.count == 1 {
-                                c.setFillColor(customArguments.customPatternColor?.cgColor ?? patternColor(for: color, intensity: intensity, prominent: prominent).cgColor)
-                                c.fill(CGRect(origin: CGPoint(), size: arguments.drawingRect.size))
-                            } else {
-                                let gradientColors = colors.map { patternColor(for: $0, intensity: intensity, prominent: prominent).cgColor } as CFArray
-                                let delta: CGFloat = 1.0 / (CGFloat(colors.count) - 1.0)
+                                if let customPatternColor = customArguments.customPatternColor {
+                                    c.setFillColor(customPatternColor.cgColor)
+                                    c.fill(CGRect(origin: CGPoint(), size: arguments.drawingRect.size))
+                                } else if colors.count >= 3 && customArguments.customPatternColor == nil {
+                                    c.setFillColor(UIColor(white: 0.0, alpha: 0.5).cgColor)
+                                    c.fill(CGRect(origin: CGPoint(), size: arguments.drawingRect.size))
+                                } else if colors.count == 1 {
+                                    c.setFillColor(customArguments.customPatternColor?.cgColor ?? patternColor(for: color, intensity: intensity, prominent: prominent).cgColor)
+                                    c.fill(CGRect(origin: CGPoint(), size: arguments.drawingRect.size))
+                                } else {
+                                    let gradientColors = colors.map { patternColor(for: $0, intensity: intensity, prominent: prominent).cgColor } as CFArray
+                                    let delta: CGFloat = 1.0 / (CGFloat(colors.count) - 1.0)
 
-                                var locations: [CGFloat] = []
-                                for i in 0 ..< colors.count {
-                                    locations.append(delta * CGFloat(i))
+                                    var locations: [CGFloat] = []
+                                    for i in 0 ..< colors.count {
+                                        locations.append(delta * CGFloat(i))
+                                    }
+                                    let colorSpace = CGColorSpaceCreateDeviceRGB()
+                                    let gradient = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: &locations)!
+
+                                    c.translateBy(x: arguments.drawingSize.width / 2.0, y: arguments.drawingSize.height / 2.0)
+                                    c.rotate(by: CGFloat(customArguments.rotation ?? 0) * CGFloat.pi / -180.0)
+                                    c.translateBy(x: -arguments.drawingSize.width / 2.0, y: -arguments.drawingSize.height / 2.0)
+
+                                    c.drawLinearGradient(gradient, start: CGPoint(x: 0.0, y: 0.0), end: CGPoint(x: 0.0, y: arguments.drawingSize.height), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
                                 }
-                                let colorSpace = CGColorSpaceCreateDeviceRGB()
-                                let gradient = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: &locations)!
-
-                                c.translateBy(x: arguments.drawingSize.width / 2.0, y: arguments.drawingSize.height / 2.0)
-                                c.rotate(by: CGFloat(customArguments.rotation ?? 0) * CGFloat.pi / -180.0)
-                                c.translateBy(x: -arguments.drawingSize.width / 2.0, y: -arguments.drawingSize.height / 2.0)
-
-                                c.drawLinearGradient(gradient, start: CGPoint(x: 0.0, y: 0.0), end: CGPoint(x: 0.0, y: arguments.drawingSize.height), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+                                c.restoreGState()
+                            }
+                            
+                            switch displayMode {
+                            case .aspectFit, .halfAspectFill:
+                                var fittedRect = CGRect(origin: CGPoint(x: drawingRect.origin.x, y: drawingRect.origin.y + (drawingRect.size.height - fittedSize.height) / 2.0), size: fittedSize)
+                                drawTile(fittedRect)
+                                while (fittedRect.maxX < size.width) {
+                                    fittedRect = fittedRect.offsetBy(dx: fittedSize.width, dy: 0.0)
+                                    drawTile(fittedRect)
+                                }
+                            case .aspectFill:
+                                let fittedRect = CGRect(origin: CGPoint(x: drawingRect.origin.x + (drawingRect.size.width - fittedSize.width) / 2.0, y: drawingRect.origin.y + (drawingRect.size.height - fittedSize.height) / 2.0), size: fittedSize)
+                                drawTile(fittedRect)
                             }
                         }
                     })
@@ -639,7 +685,9 @@ public func patternColor(for color: UIColor, intensity: CGFloat, prominent: Bool
 
 public func solidColorImage(_ color: UIColor) -> Signal<(TransformImageArguments) -> DrawingContext?, NoError> {
     return .single({ arguments in
-        let context = DrawingContext(size: arguments.drawingSize, clear: true)
+        guard let context = DrawingContext(size: arguments.drawingSize, clear: true) else {
+            return nil
+        }
         
         context.withFlippedContext { c in
             c.setFillColor(color.withAlphaComponent(1.0).cgColor)
@@ -713,7 +761,9 @@ public func gradientImage(_ colors: [UIColor], rotation: Int32? = nil) -> Signal
         }
     }
     return .single({ arguments in
-        let context = DrawingContext(size: arguments.drawingSize, clear: !arguments.corners.isEmpty)
+        guard let context = DrawingContext(size: arguments.drawingSize, clear: !arguments.corners.isEmpty) else {
+            return nil
+        }
 
         let drawingRect = arguments.drawingRect
         
@@ -768,7 +818,9 @@ private func builtinWallpaperData() -> Signal<UIImage, NoError> {
 public func settingsBuiltinWallpaperImage(account: Account, thumbnail: Bool = false) -> Signal<(TransformImageArguments) -> DrawingContext?, NoError> {
     return builtinWallpaperData() |> map { fullSizeImage in
         return { arguments in
-            let context = DrawingContext(size: arguments.drawingSize, clear: true)
+            guard let context = DrawingContext(size: arguments.drawingSize, clear: true) else {
+                return nil
+            }
             
             let drawingRect = arguments.drawingRect
             var fittedSize = fullSizeImage.size.aspectFilled(drawingRect.size)
@@ -811,7 +863,9 @@ public func photoWallpaper(postbox: Postbox, photoLibraryResource: PhotoLibraryM
         let isThumbnail = result?.1 ?? false
         
         return { arguments in
-            let context = DrawingContext(size: arguments.drawingSize, scale: 1.0, clear: true)
+            guard let context = DrawingContext(size: arguments.drawingSize, scale: 1.0, clear: true) else {
+                return nil
+            }
             
             let dimensions = sourceImage?.size
             
@@ -829,7 +883,9 @@ public func photoWallpaper(postbox: Postbox, photoLibraryResource: PhotoLibraryM
                 let initialThumbnailContextFittingSize = fittedSize.fitted(CGSize(width: 100.0, height: 100.0))
                 
                 let thumbnailContextSize = thumbnailSize.aspectFitted(initialThumbnailContextFittingSize)
-                let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0)
+                guard let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0) else {
+                    return nil
+                }
                 thumbnailContext.withFlippedContext { c in
                     c.interpolationQuality = .none
                     c.draw(thumbnailImage, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
@@ -843,7 +899,9 @@ public func photoWallpaper(postbox: Postbox, photoLibraryResource: PhotoLibraryM
                 
                 if thumbnailContextFittingSize.width > thumbnailContextSize.width {
                     let additionalContextSize = thumbnailContextFittingSize
-                    let additionalBlurContext = DrawingContext(size: additionalContextSize, scale: 1.0)
+                    guard let additionalBlurContext = DrawingContext(size: additionalContextSize, scale: 1.0) else {
+                        return nil
+                    }
                     additionalBlurContext.withFlippedContext { c in
                         c.interpolationQuality = .default
                         if let image = thumbnailContext.generateImage()?.cgImage {
@@ -882,7 +940,7 @@ public func telegramThemeData(account: Account, accountManager: AccountManager<T
         } else {
             let data = account.postbox.mediaBox.resourceData(reference.resource, option: .complete(waitUntilFetchStatus: false), attemptSynchronously: false)
             return Signal { subscriber in
-                let fetch = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: reference).start()
+                let fetch = fetchedMediaResource(mediaBox: account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: reference).start()
                 let disposable = (data
                 |> map { data -> Data? in
                     return data.complete ? try? Data(contentsOf: URL(fileURLWithPath: data.path)) : nil
@@ -1092,7 +1150,7 @@ public func themeImage(account: Account, accountManager: AccountManager<Telegram
                     let previewRepresentation = fileReference.media.previewRepresentations.first
                     let fetchedThumbnail: Signal<FetchResourceSourceType, FetchResourceError>
                     if let previewRepresentation = previewRepresentation {
-                        fetchedThumbnail = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: fileReference.resourceReference(previewRepresentation.resource))
+                        fetchedThumbnail = fetchedMediaResource(mediaBox: account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: fileReference.resourceReference(previewRepresentation.resource))
                     } else {
                         fetchedThumbnail = .complete()
                     }
@@ -1123,7 +1181,7 @@ public func themeImage(account: Account, accountManager: AccountManager<Telegram
                     let fullSizeData: Signal<Data?, NoError>
                     if isSupportedTheme {
                         fullSizeData = Signal { subscriber in
-                            let fetch = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: reference).start()
+                            let fetch = fetchedMediaResource(mediaBox: account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: reference).start()
                             let disposable = (account.postbox.mediaBox.resourceData(reference.resource, option: .complete(waitUntilFetchStatus: false), attemptSynchronously: false)
                                 |> map { data -> Data? in
                                     return data.complete ? try? Data(contentsOf: URL(fileURLWithPath: data.path)) : nil
@@ -1169,7 +1227,7 @@ public func themeImage(account: Account, accountManager: AccountManager<Telegram
                 |> mapToSignal { wallpaper -> Signal<(PresentationTheme?, WallpaperImage?, Data?), NoError> in
                     if let wallpaper = wallpaper, case let .file(file) = wallpaper.wallpaper {
                         var convertedRepresentations: [ImageRepresentationWithReference] = []
-                        convertedRepresentations.append(ImageRepresentationWithReference(representation: TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 100, height: 100), resource: file.file.resource, progressiveSizes: [], immediateThumbnailData: nil), reference: .wallpaper(wallpaper: .slug(file.slug), resource: file.file.resource)))
+                        convertedRepresentations.append(ImageRepresentationWithReference(representation: TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 100, height: 100), resource: file.file.resource, progressiveSizes: [], immediateThumbnailData: nil, hasVideo: false, isPersonal: false), reference: .wallpaper(wallpaper: .slug(file.slug), resource: file.file.resource)))
                         return wallpaperDatas(account: account, accountManager: accountManager, fileReference: .standalone(media: file.file), representations: convertedRepresentations, alwaysShowThumbnailFirst: false, thumbnail: false, onlyFullSize: true, autoFetchFullSize: true, synchronousLoad: false)
                         |> mapToSignal { _, fullSizeData, complete -> Signal<(PresentationTheme?, WallpaperImage?, Data?), NoError> in
                             guard complete, let fullSizeData = fullSizeData else {
@@ -1230,7 +1288,9 @@ public func themeImage(account: Account, accountManager: AccountManager<Telegram
                     let initialThumbnailContextFittingSize = arguments.imageSize.fitted(CGSize(width: 90.0, height: 90.0))
                     
                     let thumbnailContextSize = thumbnailSize.aspectFitted(initialThumbnailContextFittingSize)
-                    let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0)
+                    guard let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0) else {
+                        return nil
+                    }
                     thumbnailContext.withFlippedContext { c in
                         c.draw(thumbnailImage, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
                     }
@@ -1247,7 +1307,9 @@ public func themeImage(account: Account, accountManager: AccountManager<Telegram
             
             let drawingRect = arguments.drawingRect
             if let blurredThumbnailImage = blurredThumbnailImage, theme == nil {
-                let context = DrawingContext(size: arguments.drawingSize, scale: 0.0, clear: true)
+                guard let context = DrawingContext(size: arguments.drawingSize, scale: 0.0, clear: true) else {
+                    return nil
+                }
                 context.withFlippedContext { c in
                     c.setBlendMode(.copy)
                     if let cgImage = blurredThumbnailImage.cgImage {
@@ -1261,7 +1323,9 @@ public func themeImage(account: Account, accountManager: AccountManager<Telegram
                 return context
             }
             
-            let context = DrawingContext(size: arguments.drawingSize, scale: 0.0, clear: true)
+            guard let context = DrawingContext(size: arguments.drawingSize, scale: 0.0, clear: true) else {
+                return nil
+            }
             if let theme = theme {
                 context.withFlippedContext { c in
                     c.setBlendMode(.normal)
@@ -1336,7 +1400,11 @@ public func themeIconImage(account: Account, accountManager: AccountManager<Tele
     } else if case let .builtin(theme) = theme {
         var defaultTheme = makeDefaultPresentationTheme(reference: theme, serviceBackgroundColor: nil)
         if let color = color {
-            defaultTheme = customizePresentationTheme(defaultTheme, editing: false, accentColor: color.accentColor.flatMap { UIColor(rgb: $0) }, outgoingAccentColor: nil, backgroundColors: [], bubbleColors: color.bubbleColors, animateBubbleColors: nil, baseColor: color.baseColor)
+            let editing = color.accentColor == nil
+            let accentColor: UIColor = color.accentColor.flatMap { UIColor(rgb: $0) } ?? color.colorFor(baseTheme: theme.baseTheme)
+            defaultTheme = customizePresentationTheme(defaultTheme, editing: editing, accentColor: accentColor, outgoingAccentColor: nil, backgroundColors: [], bubbleColors: color.bubbleColors, animateBubbleColors: nil, baseColor: color.baseColor)
+        } else if case .night = theme {
+            defaultTheme = customizePresentationTheme(defaultTheme, editing: true, accentColor: UIColor(rgb: 0x3e88f7), outgoingAccentColor: nil, backgroundColors: [], bubbleColors: [], animateBubbleColors: nil)
         }
         themeSignal = .single(defaultTheme)
     } else if case let .cloud(theme) = theme, let settings = theme.theme.settings?.first {
@@ -1413,7 +1481,7 @@ public func themeIconImage(account: Account, accountManager: AccountManager<Tele
                             }
                             
                             var convertedRepresentations: [ImageRepresentationWithReference] = []
-                            convertedRepresentations.append(ImageRepresentationWithReference(representation: TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 100, height: 100), resource: file.file.resource, progressiveSizes: [], immediateThumbnailData: nil), reference: .wallpaper(wallpaper: .slug(file.slug), resource: file.file.resource)))
+                            convertedRepresentations.append(ImageRepresentationWithReference(representation: TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 100, height: 100), resource: file.file.resource, progressiveSizes: [], immediateThumbnailData: nil, hasVideo: false, isPersonal: false), reference: .wallpaper(wallpaper: .slug(file.slug), resource: file.file.resource)))
                             return wallpaperDatas(account: account, accountManager: accountManager, fileReference: .standalone(media: file.file), representations: convertedRepresentations, alwaysShowThumbnailFirst: false, thumbnail: false, onlyFullSize: true, autoFetchFullSize: true, synchronousLoad: false)
                             |> mapToSignal { thumbnailData, fullSizeData, complete -> Signal<((UIColor, UIColor?, [UInt32]), [UIColor], [UIColor], UIImage?, Bool, Bool, CGFloat, Int32?), NoError> in
                                 guard complete, let fullSizeData = fullSizeData else {
@@ -1487,7 +1555,9 @@ public func themeIconImage(account: Account, accountManager: AccountManager<Tele
     return colorsSignal
     |> map { colors in
         return { arguments in
-            let context = DrawingContext(size: arguments.drawingSize, scale: arguments.scale ?? 0.0, clear: arguments.emptyColor == nil)
+            guard let context = DrawingContext(size: arguments.drawingSize, scale: arguments.scale ?? 0.0, clear: arguments.emptyColor == nil) else {
+                return nil
+            }
             let drawingRect = arguments.drawingRect
             
             context.withContext { c in
@@ -1526,7 +1596,9 @@ public func themeIconImage(account: Account, accountManager: AccountManager<Tele
                     if colors.4 {
                         let initialThumbnailContextFittingSize = arguments.imageSize.fitted(CGSize(width: 90.0, height: 90.0))
                         let thumbnailContextSize = image.size.aspectFilled(initialThumbnailContextFittingSize)
-                        let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0)
+                        guard let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0) else {
+                            return
+                        }
                         thumbnailContext.withFlippedContext { c in
                             c.draw(image.cgImage!, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
                         }
@@ -1736,7 +1808,7 @@ public func wallpaperThumbnail(account: Account, accountManager: AccountManager<
                     }
                 }
             })
-            let fetch = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: fileReference.resourceReference(thumbnail.resource)).start()
+            let fetch = fetchedMediaResource(mediaBox: account.postbox.mediaBox, userLocation: .other, userContentType: .other, reference: fileReference.resourceReference(thumbnail.resource)).start()
 
             return ActionDisposable {
                 data.dispose()
@@ -1755,7 +1827,9 @@ public func wallpaperThumbnail(account: Account, accountManager: AccountManager<
                     }
                 }
 
-                let context = DrawingContext(size: arguments.boundingSize, clear: true)
+                guard let context = DrawingContext(size: arguments.boundingSize, clear: true) else {
+                    return nil
+                }
 
                 context.withFlippedContext { c in
                     let colors = file.settings.colors.map(UIColor.init(rgb:))

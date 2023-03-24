@@ -89,7 +89,7 @@ public final class TelegramGroup: Peer, Equatable {
     public let version: Int
     
     public var indexName: PeerIndexNameRepresentation {
-        return .title(title: self.title, addressName: nil)
+        return .title(title: self.title, addressNames: [])
     }
     
     public var associatedMediaIds: [MediaId]? { return nil }
@@ -146,6 +146,7 @@ public final class TelegramGroup: Peer, Equatable {
         encoder.encodeInt32(Int32(self.participantCount), forKey: "pc")
         encoder.encodeObject(self.role, forKey: "rv")
         encoder.encodeInt32(self.membership.rawValue, forKey: "m")
+        encoder.encodeInt32(self.flags.rawValue, forKey: "f")
         if let defaultBannedRights = self.defaultBannedRights {
             encoder.encodeObject(defaultBannedRights, forKey: "dbr")
         } else {

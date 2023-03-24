@@ -33,7 +33,9 @@ private final class InternalContext {
     
     init(sharedContext: SharedAccountContextImpl) {
         self.sharedContext = sharedContext
-        self.wakeupManager = SharedWakeupManager(beginBackgroundTask: { _, _ in nil }, endBackgroundTask: { _ in }, backgroundTimeRemaining: { 0.0 }, activeAccounts: sharedContext.activeAccountContexts |> map { ($0.0?.account, $0.1.map { ($0.0, $0.1.account) }) }, liveLocationPolling: .single(nil), watchTasks: .single(nil), inForeground: inForeground.get(), hasActiveAudioSession: .single(false), notificationManager: nil, mediaManager: sharedContext.mediaManager, callManager: sharedContext.callManager, accountUserInterfaceInUse: { id in
+        self.wakeupManager = SharedWakeupManager(beginBackgroundTask: { _, _ in nil }, endBackgroundTask: { _ in }, backgroundTimeRemaining: { 0.0 }, acquireIdleExtension: {
+            return nil
+        }, activeAccounts: sharedContext.activeAccountContexts |> map { ($0.0?.account, $0.1.map { ($0.0, $0.1.account) }) }, liveLocationPolling: .single(nil), watchTasks: .single(nil), inForeground: inForeground.get(), hasActiveAudioSession: .single(false), notificationManager: nil, mediaManager: sharedContext.mediaManager, callManager: sharedContext.callManager, accountUserInterfaceInUse: { id in
             return sharedContext.accountUserInterfaceInUse(id)
         })
     }
@@ -64,8 +66,9 @@ public struct ShareRootControllerInitializationData {
     public let encryptionParameters: (Data, Data)
     public let appVersion: String
     public let bundleData: Data?
+    public let useBetaFeatures: Bool
     
-    public init(appBundleId: String, appBuildType: TelegramAppBuildType, appGroupPath: String, apiId: Int32, apiHash: String, languagesCategory: String, encryptionParameters: (Data, Data), appVersion: String, bundleData: Data?) {
+    public init(appBundleId: String, appBuildType: TelegramAppBuildType, appGroupPath: String, apiId: Int32, apiHash: String, languagesCategory: String, encryptionParameters: (Data, Data), appVersion: String, bundleData: Data?, useBetaFeatures: Bool) {
         self.appBundleId = appBundleId
         self.appBuildType = appBuildType
         self.appGroupPath = appGroupPath
@@ -75,6 +78,7 @@ public struct ShareRootControllerInitializationData {
         self.encryptionParameters = encryptionParameters
         self.appVersion = appVersion
         self.bundleData = bundleData
+        self.useBetaFeatures = useBetaFeatures
     }
 }
 
@@ -237,7 +241,7 @@ public class ShareRootControllerImpl {
                     return nil
                 })
                 
-                let sharedContext = SharedAccountContextImpl(mainWindow: nil, sharedContainerPath: self.initializationData.appGroupPath, basePath: rootPath, encryptionParameters: ValueBoxEncryptionParameters(forceEncryptionIfNoSet: false, key: ValueBoxEncryptionParameters.Key(data: self.initializationData.encryptionParameters.0)!, salt: ValueBoxEncryptionParameters.Salt(data: self.initializationData.encryptionParameters.1)!), accountManager: accountManager, appLockContext: appLockContext, applicationBindings: applicationBindings, initialPresentationDataAndSettings: initialPresentationDataAndSettings!, networkArguments: NetworkInitializationArguments(apiId: self.initializationData.apiId, apiHash: self.initializationData.apiHash, languagesCategory: self.initializationData.languagesCategory, appVersion: self.initializationData.appVersion, voipMaxLayer: 0, voipVersions: [], appData: .single(self.initializationData.bundleData), autolockDeadine: .single(nil), encryptionProvider: OpenSSLEncryptionProvider(), resolvedDeviceName: nil), hasInAppPurchases: false, rootPath: rootPath, legacyBasePath: nil, apsNotificationToken: .never(), voipNotificationToken: .never(), setNotificationCall: { _ in }, navigateToChat: { _, _, _ in })
+                let sharedContext = SharedAccountContextImpl(mainWindow: nil, sharedContainerPath: self.initializationData.appGroupPath, basePath: rootPath, encryptionParameters: ValueBoxEncryptionParameters(forceEncryptionIfNoSet: false, key: ValueBoxEncryptionParameters.Key(data: self.initializationData.encryptionParameters.0)!, salt: ValueBoxEncryptionParameters.Salt(data: self.initializationData.encryptionParameters.1)!), accountManager: accountManager, appLockContext: appLockContext, applicationBindings: applicationBindings, initialPresentationDataAndSettings: initialPresentationDataAndSettings!, networkArguments: NetworkInitializationArguments(apiId: self.initializationData.apiId, apiHash: self.initializationData.apiHash, languagesCategory: self.initializationData.languagesCategory, appVersion: self.initializationData.appVersion, voipMaxLayer: 0, voipVersions: [], appData: .single(self.initializationData.bundleData), autolockDeadine: .single(nil), encryptionProvider: OpenSSLEncryptionProvider(), deviceModelName: nil, useBetaFeatures: self.initializationData.useBetaFeatures), hasInAppPurchases: false, rootPath: rootPath, legacyBasePath: nil, apsNotificationToken: .never(), voipNotificationToken: .never(), firebaseSecretStream: .never(), setNotificationCall: { _ in }, navigateToChat: { _, _, _ in }, appDelegate: nil)
                 presentationDataPromise.set(sharedContext.presentationData)
                 internalContext = InternalContext(sharedContext: sharedContext)
                 globalInternalContext = internalContext
@@ -258,7 +262,7 @@ public class ShareRootControllerImpl {
             }
             |> castError(ShareAuthorizationError.self)
             |> mapToSignal { sharedContext, loggingSettings -> Signal<(SharedAccountContextImpl, Account, [AccountWithInfo]), ShareAuthorizationError> in
-                Logger.shared.logToFile = true//loggingSettings.logToFile
+                Logger.shared.logToFile = loggingSettings.logToFile
                 Logger.shared.logToConsole = loggingSettings.logToConsole
                 
                 Logger.shared.redactSensitiveData = loggingSettings.redactSensitiveData
@@ -353,8 +357,8 @@ public class ShareRootControllerImpl {
                             } |> runOn(Queue.mainQueue())
                         }
                         
-                        let sentItems: ([PeerId], [PreparedShareItemContent], Account, Bool) -> Signal<ShareControllerExternalStatus, NoError> = { peerIds, contents, account, silently in
-                            let sentItems = sentShareItems(account: account, to: peerIds, items: contents, silently: silently)
+                        let sentItems: ([PeerId], [PeerId: Int64], [PreparedShareItemContent], Account, Bool) -> Signal<ShareControllerExternalStatus, NoError> = { peerIds, threadIds, contents, account, silently in
+                            let sentItems = sentShareItems(account: account, to: peerIds, threadIds: threadIds, items: contents, silently: silently)
                             |> `catch` { _ -> Signal<
                                 Float, NoError> in
                                 return .complete()
@@ -366,7 +370,7 @@ public class ShareRootControllerImpl {
                             |> then(.single(.done))
                         }
                                             
-                        let shareController = ShareController(context: context, subject: .fromExternal({ peerIds, additionalText, account, silently in
+                        let shareController = ShareController(context: context, subject: .fromExternal({ peerIds, threadIds, additionalText, account, silently in
                             if let strongSelf = self, let inputItems = strongSelf.getExtensionContext()?.inputItems, !inputItems.isEmpty, !peerIds.isEmpty {
                                 let rawSignals = TGItemProviderSignals.itemSignals(forInputItems: inputItems)!
                                 return preparedShareItems(account: account, to: peerIds[0], dataItems: rawSignals, additionalText: additionalText)
@@ -392,11 +396,11 @@ public class ShareRootControllerImpl {
                                             return requestUserInteraction(value)
                                             |> castError(ShareControllerError.self)
                                             |> mapToSignal { contents -> Signal<ShareControllerExternalStatus, ShareControllerError> in
-                                                return sentItems(peerIds, contents, account, silently)
+                                                return sentItems(peerIds, threadIds, contents, account, silently)
                                                 |> castError(ShareControllerError.self)
                                             }
                                         case let .done(contents):
-                                            return sentItems(peerIds, contents, account, silently)
+                                            return sentItems(peerIds, threadIds, contents, account, silently)
                                             |> castError(ShareControllerError.self)
                                     }
                                 }
@@ -659,17 +663,17 @@ public class ShareRootControllerImpl {
                                                 case let .group(groupTitle):
                                                     var attemptSelectionImpl: ((Peer) -> Void)?
                                                     var createNewGroupImpl: (() -> Void)?
-                                                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyGroups, .onlyManageable, .excludeDisabled, .doNotSearchMessages], hasContactSelector: false, hasGlobalSearch: false, title: presentationData.strings.ChatImport_Title, attemptSelection: { peer in
+                                                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyGroups, .onlyManageable, .excludeDisabled, .doNotSearchMessages], hasContactSelector: false, hasGlobalSearch: false, title: presentationData.strings.ChatImport_Title, attemptSelection: { peer, _ in
                                                         attemptSelectionImpl?(peer)
                                                     }, createNewGroup: {
                                                         createNewGroupImpl?()
-                                                    }, pretendPresentedInModal: true))
+                                                    }, pretendPresentedInModal: true, selectForumThreads: true))
                                                     
                                                     controller.customDismiss = {
                                                         self?.getExtensionContext()?.completeRequest(returningItems: nil, completionHandler: nil)
                                                     }
                                                     
-                                                    controller.peerSelected = { peer in
+                                                    controller.peerSelected = { peer, _ in
                                                         attemptSelectionImpl?(peer)
                                                     }
                                                     
@@ -835,15 +839,15 @@ public class ShareRootControllerImpl {
                                                     let presentationData = internalContext.sharedContext.currentPresentationData.with { $0 }
                                                     
                                                     var attemptSelectionImpl: ((Peer) -> Void)?
-                                                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyPrivateChats, .excludeDisabled, .doNotSearchMessages, .excludeSecretChats], hasChatListSelector: false, hasContactSelector: true, hasGlobalSearch: false, title: presentationData.strings.ChatImport_Title, attemptSelection: { peer in
+                                                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyPrivateChats, .excludeDisabled, .doNotSearchMessages, .excludeSecretChats], hasChatListSelector: false, hasContactSelector: true, hasGlobalSearch: false, title: presentationData.strings.ChatImport_Title, attemptSelection: { peer, _ in
                                                         attemptSelectionImpl?(peer)
-                                                    }, pretendPresentedInModal: true))
+                                                    }, pretendPresentedInModal: true, selectForumThreads: true))
                                                     
                                                     controller.customDismiss = {
                                                         self?.getExtensionContext()?.completeRequest(returningItems: nil, completionHandler: nil)
                                                     }
                                                     
-                                                    controller.peerSelected = { peer in
+                                                    controller.peerSelected = { peer, _ in
                                                         attemptSelectionImpl?(peer)
                                                     }
                                                     
@@ -908,17 +912,17 @@ public class ShareRootControllerImpl {
                                                 case let .unknown(peerTitle):
                                                     var attemptSelectionImpl: ((Peer) -> Void)?
                                                     var createNewGroupImpl: (() -> Void)?
-                                                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.excludeDisabled, .doNotSearchMessages], hasContactSelector: true, hasGlobalSearch: false, title: presentationData.strings.ChatImport_Title, attemptSelection: { peer in
+                                                    let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.excludeDisabled, .doNotSearchMessages], hasContactSelector: true, hasGlobalSearch: false, title: presentationData.strings.ChatImport_Title, attemptSelection: { peer, _ in
                                                         attemptSelectionImpl?(peer)
                                                     }, createNewGroup: {
                                                         createNewGroupImpl?()
-                                                    }, pretendPresentedInModal: true))
+                                                    }, pretendPresentedInModal: true, selectForumThreads: true))
                                                     
                                                     controller.customDismiss = {
                                                         self?.getExtensionContext()?.completeRequest(returningItems: nil, completionHandler: nil)
                                                     }
                                                     
-                                                    controller.peerSelected = { peer in
+                                                    controller.peerSelected = { peer, _ in
                                                         attemptSelectionImpl?(peer)
                                                     }
                                                     

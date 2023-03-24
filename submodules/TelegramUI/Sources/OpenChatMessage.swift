@@ -113,7 +113,7 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
                             }))
                         }
                     }
-                })
+                }, getSourceRect: params.getSourceRect)
                 params.dismissInput()
                 params.present(controller, nil)
                 return true
@@ -260,7 +260,9 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
 
 func openChatInstantPage(context: AccountContext, message: Message, sourcePeerType: MediaAutoDownloadPeerType?, navigationController: NavigationController) {
     if let (webpage, anchor) = instantPageAndAnchor(message: message) {
-        let pageController = InstantPageController(context: context, webPage: webpage, sourcePeerType: sourcePeerType ?? .channel, anchor: anchor)
+        let sourceLocation = InstantPageSourceLocation(userLocation: .peer(message.id.peerId), peerType: sourcePeerType ?? .channel)
+        
+        let pageController = InstantPageController(context: context, webPage: webpage, sourceLocation: sourceLocation, anchor: anchor)
         navigationController.pushViewController(pageController)
     }
 }

@@ -9,7 +9,7 @@ import Postbox
 import TelegramUIPreferences
 import TelegramCore
 
-func chatListFilterItems(context: AccountContext) -> Signal<(Int, [(ChatListFilter, Int, Bool)]), NoError> {
+public func chatListFilterItems(context: AccountContext) -> Signal<(Int, [(ChatListFilter, Int, Bool)]), NoError> {
     return context.engine.peers.updatedChatListFilters()
     |> distinctUntilChanged
     |> mapToSignal { filters -> Signal<(Int, [(ChatListFilter, Int, Bool)]), NoError> in
@@ -26,7 +26,7 @@ func chatListFilterItems(context: AccountContext) -> Signal<(Int, [(ChatListFilt
         }
         if !additionalPeerIds.isEmpty {
             for peerId in additionalPeerIds {
-                unreadCountItems.append(.peer(peerId))
+                unreadCountItems.append(.peer(id: peerId, handleThreads: true))
             }
         }
         for groupId in additionalGroupIds {
@@ -175,8 +175,9 @@ func chatListFilterItems(context: AccountContext) -> Signal<(Int, [(ChatListFilt
                     }
                     for peerId in data.excludePeers {
                         if let (tag, peerCount, _, groupIdValue, isMuted) = peerTagAndCount[peerId], peerCount != 0, let groupId = groupIdValue {
-                            var matches = true
+                            var matches = false
                             if tags.contains(tag) {
+                                matches = true
                                 if isMuted && data.excludeMuted {
                                     matches = false
                                 }

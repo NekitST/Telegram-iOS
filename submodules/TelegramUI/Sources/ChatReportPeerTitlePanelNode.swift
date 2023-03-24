@@ -24,29 +24,32 @@ private enum ChatReportPeerTitleButton: Equatable {
     case reportIrrelevantGeoLocation
     case unarchive
     case addMembers
+    case restartTopic
     
     func title(strings: PresentationStrings) -> String {
         switch self {
-            case .block:
-                return strings.Conversation_BlockUser
-            case let .addContact(name):
-                if let name = name {
-                    return strings.Conversation_AddNameToContacts(name).string
-                } else {
-                    return strings.Conversation_AddToContacts
-                }
-            case .shareMyPhoneNumber:
-                return strings.Conversation_ShareMyPhoneNumber
-            case .reportSpam:
-                return strings.Conversation_ReportSpamAndLeave
-            case .reportUserSpam:
-                return strings.Conversation_ReportSpam
-            case .reportIrrelevantGeoLocation:
-                return strings.Conversation_ReportGroupLocation
-            case .unarchive:
-                return strings.Conversation_Unarchive
-            case .addMembers:
-                return strings.Conversation_AddMembers
+        case .block:
+            return strings.Conversation_BlockUser
+        case let .addContact(name):
+            if let name = name {
+                return strings.Conversation_AddNameToContacts(name).string
+            } else {
+                return strings.Conversation_AddToContacts
+            }
+        case .shareMyPhoneNumber:
+            return strings.Conversation_ShareMyPhoneNumber
+        case .reportSpam:
+            return strings.Conversation_ReportSpamAndLeave
+        case .reportUserSpam:
+            return strings.Conversation_ReportSpam
+        case .reportIrrelevantGeoLocation:
+            return strings.Conversation_ReportGroupLocation
+        case .unarchive:
+            return strings.Conversation_Unarchive
+        case .addMembers:
+            return strings.Conversation_AddMembers
+        case .restartTopic:
+            return strings.Chat_PanelRestartTopic
         }
     }
 }
@@ -93,16 +96,37 @@ private func peerButtons(_ state: ChatPresentationInterfaceState) -> [ChatReport
                 buttons.append(.shareMyPhoneNumber)
             }
         }
-    } else if let _ = state.renderedPeer?.chatMainPeer, case .peer = state.chatLocation {
-        if let contactStatus = state.contactStatus, let peerStatusSettings = contactStatus.peerStatusSettings, peerStatusSettings.contains(.suggestAddMembers) {
-            buttons.append(.addMembers)
-        } else if let contactStatus = state.contactStatus, contactStatus.canReportIrrelevantLocation, let peerStatusSettings = contactStatus.peerStatusSettings, peerStatusSettings.contains(.canReportIrrelevantGeoLocation) {
-            buttons.append(.reportIrrelevantGeoLocation)
-        } else if let contactStatus = state.contactStatus, let peerStatusSettings = contactStatus.peerStatusSettings, peerStatusSettings.contains(.autoArchived) {
-            buttons.append(.reportUserSpam)
-            buttons.append(.unarchive)
-        } else {
-            buttons.append(.reportSpam)
+    } else if let peer = state.renderedPeer?.chatMainPeer {
+        if let channel = peer as? TelegramChannel, channel.flags.contains(.isForum) {
+            if let threadData = state.threadData {
+                if threadData.isClosed {
+                    var canManage = false
+                    if channel.flags.contains(.isCreator) {
+                        canManage = true
+                    } else if channel.hasPermission(.manageTopics) {
+                        canManage = true
+                    } else if threadData.isOwnedByMe {
+                        canManage = true
+                    }
+                    
+                    if canManage {
+                        return [.restartTopic]
+                    }
+                }
+            }
+        }
+        
+        if case .peer = state.chatLocation {
+            if let contactStatus = state.contactStatus, let peerStatusSettings = contactStatus.peerStatusSettings, peerStatusSettings.contains(.suggestAddMembers) {
+                buttons.append(.addMembers)
+            } else if let contactStatus = state.contactStatus, contactStatus.canReportIrrelevantLocation, let peerStatusSettings = contactStatus.peerStatusSettings, peerStatusSettings.contains(.canReportIrrelevantGeoLocation) {
+                buttons.append(.reportIrrelevantGeoLocation)
+            } else if let contactStatus = state.contactStatus, let peerStatusSettings = contactStatus.peerStatusSettings, peerStatusSettings.contains(.autoArchived) {
+                buttons.append(.reportUserSpam)
+                buttons.append(.unarchive)
+            } else {
+                buttons.append(.reportSpam)
+            }
         }
     }
     return buttons
@@ -142,6 +166,14 @@ private final class ChatInfoTitlePanelInviteInfoNode: ASDisplayNode {
                 }
             }
         }
+    }
+    
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        if result == self.view {
+            return nil
+        }
+        return result
     }
     
     func update(width: CGFloat, theme: PresentationTheme, strings: PresentationStrings, wallpaper: TelegramWallpaper, chatPeer: Peer, invitedBy: Peer, transition: ContainedViewLayoutTransition) -> CGFloat {
@@ -379,7 +411,7 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
         } else {
             updatedButtons = []
         }
-        
+                
         var buttonsUpdated = false
         if self.buttons.count != updatedButtons.count {
             buttonsUpdated = true
@@ -415,17 +447,17 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
             }
         }
         
+        let additionalRightInset: CGFloat = 36.0
         if !self.buttons.isEmpty {
             let maxInset = max(contentRightInset, leftInset)
             if self.buttons.count == 1 {
-                let buttonWidth = floor((width - maxInset * 2.0) / CGFloat(self.buttons.count))
+                let buttonWidth = floor((width - maxInset * 2.0 - additionalRightInset) / CGFloat(self.buttons.count))
                 var nextButtonOrigin: CGFloat = maxInset
                 for (_, view) in self.buttons {
-                    view.frame = CGRect(origin: CGPoint(x: nextButtonOrigin, y: 0.0), size: CGSize(width: buttonWidth, height: panelHeight))
+                    view.frame = CGRect(origin: CGPoint(x: floorToScreenPixels((width - buttonWidth) / 2.0), y: 0.0), size: CGSize(width: buttonWidth, height: panelHeight))
                     nextButtonOrigin += buttonWidth
                 }
             } else {
-                let additionalRightInset: CGFloat = 36.0
                 var areaWidth = width - maxInset * 2.0 - additionalRightInset
                 let maxButtonWidth = floor(areaWidth / CGFloat(self.buttons.count))
                 let buttonSizes = self.buttons.map { button -> CGFloat in
@@ -496,6 +528,11 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
         
         let closeButtonSize = self.closeButton.measure(CGSize(width: 100.0, height: 100.0))
         transition.updateFrame(node: self.closeButton, frame: CGRect(origin: CGPoint(x: width - contentRightInset - closeButtonSize.width, y: floorToScreenPixels((panelHeight - closeButtonSize.height) / 2.0)), size: closeButtonSize))
+        if updatedButtons.contains(.restartTopic) {
+            self.closeButton.isHidden = true
+        } else {
+            self.closeButton.isHidden = false
+        }
         
         var emojiStatus: PeerEmojiStatus?
         if let user = interfaceState.renderedPeer?.peer as? TelegramUser, let emojiStatusValue = user.emojiStatus {
@@ -565,11 +602,17 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
         let initialPanelHeight = panelHeight
         transition.updateFrame(node: self.separatorNode, frame: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: width, height: UIScreenPixel)))
         
+        var panelInset: CGFloat = 0.0
+        if let _ = interfaceState.translationState {
+            panelInset += 40.0
+        }
+        
         var chatPeer: Peer?
         if let renderedPeer = interfaceState.renderedPeer {
             chatPeer = renderedPeer.peers[renderedPeer.peerId]
         }
-        if let chatPeer = chatPeer, let invitedBy = interfaceState.contactStatus?.invitedBy {
+        var hitTestSlop: CGFloat = 0.0
+        if let chatPeer = chatPeer, (updatedButtons.contains(.block) || updatedButtons.contains(.reportSpam) || updatedButtons.contains(.reportUserSpam)), let invitedBy = interfaceState.contactStatus?.invitedBy {
             var inviteInfoTransition = transition
             let inviteInfoNode: ChatInfoTitlePanelInviteInfoNode
             if let current = self.inviteInfoNode {
@@ -587,8 +630,9 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
             
             if let inviteInfoNode = self.inviteInfoNode {
                 let inviteHeight = inviteInfoNode.update(width: width, theme: interfaceState.theme, strings: interfaceState.strings, wallpaper: interfaceState.chatWallpaper, chatPeer: chatPeer, invitedBy: invitedBy, transition: inviteInfoTransition)
-                inviteInfoTransition.updateFrame(node: inviteInfoNode, frame: CGRect(origin: CGPoint(x: 0.0, y: panelHeight), size: CGSize(width: width, height: inviteHeight)))
+                inviteInfoTransition.updateFrame(node: inviteInfoNode, frame: CGRect(origin: CGPoint(x: 0.0, y: panelHeight + panelInset), size: CGSize(width: width, height: inviteHeight)))
                 panelHeight += inviteHeight
+                hitTestSlop = -inviteHeight
             }
         } else if let inviteInfoNode = self.inviteInfoNode {
             self.inviteInfoNode = nil
@@ -615,7 +659,7 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
             
             if let peerNearbyInfoNode = self.peerNearbyInfoNode {
                 let peerNearbyHeight = peerNearbyInfoNode.update(width: width, theme: interfaceState.theme, strings: interfaceState.strings, wallpaper: interfaceState.chatWallpaper, chatPeer: chatPeer, distance: distance, transition: peerNearbyInfoTransition)
-                peerNearbyInfoTransition.updateFrame(node: peerNearbyInfoNode, frame: CGRect(origin: CGPoint(x: 0.0, y: panelHeight), size: CGSize(width: width, height: peerNearbyHeight)))
+                peerNearbyInfoTransition.updateFrame(node: peerNearbyInfoNode, frame: CGRect(origin: CGPoint(x: 0.0, y: panelHeight + panelInset), size: CGSize(width: width, height: peerNearbyHeight)))
                 panelHeight += peerNearbyHeight
             }
         } else if let peerNearbyInfoNode = self.peerNearbyInfoNode {
@@ -624,26 +668,27 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
                 peerNearbyInfoNode?.removeFromSupernode()
             })
         }
-        
-        return LayoutResult(backgroundHeight: initialPanelHeight, insetHeight: panelHeight)
+        return LayoutResult(backgroundHeight: initialPanelHeight, insetHeight: panelHeight + panelInset, hitTestSlop: hitTestSlop)
     }
     
     @objc func buttonPressed(_ view: UIButton) {
         for (button, buttonView) in self.buttons {
             if buttonView === view {
                 switch button {
-                    case .shareMyPhoneNumber:
-                        self.interfaceInteraction?.shareAccountContact()
-                    case .block, .reportSpam, .reportUserSpam:
-                        self.interfaceInteraction?.reportPeer()
-                    case .unarchive:
-                        self.interfaceInteraction?.unarchivePeer()
-                    case .addMembers:
-                        self.interfaceInteraction?.presentInviteMembers()
-                    case .addContact:
-                        self.interfaceInteraction?.presentPeerContact()
-                    case .reportIrrelevantGeoLocation:
-                        self.interfaceInteraction?.reportPeerIrrelevantGeoLocation()
+                case .shareMyPhoneNumber:
+                    self.interfaceInteraction?.shareAccountContact()
+                case .block, .reportSpam, .reportUserSpam:
+                    self.interfaceInteraction?.reportPeer()
+                case .unarchive:
+                    self.interfaceInteraction?.unarchivePeer()
+                case .addMembers:
+                    self.interfaceInteraction?.presentInviteMembers()
+                case .addContact:
+                    self.interfaceInteraction?.presentPeerContact()
+                case .reportIrrelevantGeoLocation:
+                    self.interfaceInteraction?.reportPeerIrrelevantGeoLocation()
+                case .restartTopic:
+                    self.interfaceInteraction?.restartTopic()
                 }
                 break
             }
@@ -655,13 +700,16 @@ final class ChatReportPeerTitlePanelNode: ChatTitleAccessoryPanelNode {
     }
     
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if let result = self.closeButton.hitTest(CGPoint(x: point.x - self.closeButton.frame.minX, y: point.y - self.closeButton.frame.minY), with: event) {
+        if !self.closeButton.isHidden, let result = self.closeButton.hitTest(CGPoint(x: point.x - self.closeButton.frame.minX, y: point.y - self.closeButton.frame.minY), with: event) {
             return result
         }
         if let inviteInfoNode = self.inviteInfoNode {
             if let result = inviteInfoNode.view.hitTest(self.view.convert(point, to: inviteInfoNode.view), with: event) {
                 return result
             }
+        }
+        if point.y > 40.0 {
+            return nil
         }
         return super.hitTest(point, with: event)
     }

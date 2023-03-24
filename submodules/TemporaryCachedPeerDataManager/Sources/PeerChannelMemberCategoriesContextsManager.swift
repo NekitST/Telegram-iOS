@@ -147,6 +147,12 @@ private final class PeerChannelMemberCategoriesContextsManagerImpl {
         }
     }
     
+    func reset(peerId: PeerId, control: PeerChannelMemberCategoryControl) {
+        if let context = self.contexts[peerId] {
+            context.reset(control.key)
+        }
+    }
+    
     func profileData(postbox: Postbox, network: Network, peerId: PeerId, customData: Signal<Never, NoError>?) -> Disposable {
         let context: ProfileDataPreloadContext
         if let current = self.profileDataPreloadContexts[peerId] {
@@ -282,6 +288,12 @@ public final class PeerChannelMemberCategoriesContextsManager {
             self.impl.with { impl in
                 impl.loadMore(peerId: peerId, control: control)
             }
+        }
+    }
+    
+    public func reset(peerId: PeerId, control: PeerChannelMemberCategoryControl) {
+        self.impl.with { impl in
+            impl.reset(peerId: peerId, control: control)
         }
     }
     
@@ -476,6 +488,46 @@ public final class PeerChannelMemberCategoriesContextsManager {
         }
         |> mapToSignal { _ -> Signal<Void, AddChannelMemberError> in
             return .complete()
+        }
+    }
+    
+    public func addMembersAllowPartial(engine: TelegramEngine, peerId: PeerId, memberIds: [PeerId]) -> Signal<[(PeerId, AddChannelMemberError)], NoError> {
+        let signals: [Signal<((ChannelParticipant?, RenderedChannelParticipant)?, PeerId, AddChannelMemberError?), NoError>] = memberIds.map({ memberId in
+            return engine.peers.addChannelMember(peerId: peerId, memberId: memberId)
+            |> map { result -> ((ChannelParticipant?, RenderedChannelParticipant)?, PeerId, AddChannelMemberError?) in
+                return (result, memberId, nil)
+            }
+            |> `catch` { error -> Signal<((ChannelParticipant?, RenderedChannelParticipant)?, PeerId, AddChannelMemberError?), NoError> in
+                return .single((nil, memberId, error))
+            }
+        })
+        return combineLatest(signals)
+        |> deliverOnMainQueue
+        |> beforeNext { [weak self] results in
+            if let strongSelf = self {
+                strongSelf.impl.with { impl in
+                    for (result, _, _) in results {
+                        if let (previous, updated) = result {
+                            for (contextPeerId, context) in impl.contexts {
+                                if peerId == contextPeerId {
+                                    context.replayUpdates([(previous, updated, nil)])
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        |> map { results -> [(PeerId, AddChannelMemberError)] in
+            var failedIds: [(PeerId, AddChannelMemberError)] = []
+            
+            for (_, memberId, error) in results {
+                if let error = error {
+                    failedIds.append((memberId, error))
+                }
+            }
+            
+            return failedIds
         }
     }
     

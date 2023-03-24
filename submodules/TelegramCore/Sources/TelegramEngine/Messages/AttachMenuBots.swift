@@ -11,6 +11,7 @@ public final class AttachMenuBots: Equatable, Codable {
             case botIcons
             case peerTypes
             case hasSettings
+            case flags
         }
         
         public enum IconName: Int32, Codable {
@@ -36,6 +37,21 @@ public final class AttachMenuBots: Equatable, Codable {
                         return nil
                 }
             }
+        }
+        
+        public struct Flags: OptionSet {
+            public var rawValue: Int32
+            
+            public init(rawValue: Int32) {
+                self.rawValue = rawValue
+            }
+            
+            public init() {
+                self.rawValue = 0
+            }
+            
+            public static let hasSettings = Flags(rawValue: 1 << 0)
+            public static let requiresWriteAccess = Flags(rawValue: 1 << 1)
         }
         
         public struct PeerFlags: OptionSet, Codable {
@@ -94,20 +110,20 @@ public final class AttachMenuBots: Equatable, Codable {
         public let name: String
         public let icons: [IconName: TelegramMediaFile]
         public let peerTypes: PeerFlags
-        public let hasSettings: Bool
+        public let flags: Flags
         
         public init(
             peerId: PeerId,
             name: String,
             icons: [IconName: TelegramMediaFile],
             peerTypes: PeerFlags,
-            hasSettings: Bool
+            flags: Flags
         ) {
             self.peerId = peerId
             self.name = name
             self.icons = icons
             self.peerTypes = peerTypes
-            self.hasSettings = hasSettings
+            self.flags = flags
         }
         
         public static func ==(lhs: Bot, rhs: Bot) -> Bool {
@@ -123,7 +139,7 @@ public final class AttachMenuBots: Equatable, Codable {
             if lhs.peerTypes != rhs.peerTypes {
                 return false
             }
-            if lhs.hasSettings != rhs.hasSettings {
+            if lhs.flags != rhs.flags {
                 return false
             }
             return true
@@ -147,7 +163,12 @@ public final class AttachMenuBots: Equatable, Codable {
             let value = try container.decodeIfPresent(Int32.self, forKey: .peerTypes) ?? Int32(PeerFlags.default.rawValue)
             self.peerTypes = PeerFlags(rawValue: UInt32(value))
             
-            self.hasSettings = try container.decodeIfPresent(Bool.self, forKey: .hasSettings) ?? false
+            if let flags = try container.decodeIfPresent(Int32.self, forKey: .flags) {
+                self.flags = Flags(rawValue: flags)
+            } else {
+                let hasSettings = try container.decodeIfPresent(Bool.self, forKey: .hasSettings) ?? false
+                self.flags = hasSettings ? [.hasSettings] : []
+            }
         }
         
         public func encode(to encoder: Encoder) throws {
@@ -164,7 +185,7 @@ public final class AttachMenuBots: Equatable, Codable {
             
             try container.encode(Int32(self.peerTypes.rawValue), forKey: .peerTypes)
             
-            try container.encode(self.hasSettings, forKey: .hasSettings)
+            try container.encode(Int32(self.flags.rawValue), forKey: .flags)
         }
     }
     
@@ -276,7 +297,7 @@ func managedSynchronizeAttachMenuBots(postbox: Postbox, network: Network, force:
                             var resultBots: [AttachMenuBots.Bot] = []
                             for bot in bots {
                                 switch bot {
-                                    case let .attachMenuBot(flags, botId, name, apiPeerTypes, botIcons):
+                                    case let .attachMenuBot(apiFlags, botId, name, apiPeerTypes, botIcons):
                                         var icons: [AttachMenuBots.Bot.IconName: TelegramMediaFile] = [:]
                                         for icon in botIcons {
                                             switch icon {
@@ -302,7 +323,14 @@ func managedSynchronizeAttachMenuBots(postbox: Postbox, network: Network, force:
                                                         peerTypes.insert(.channel)
                                                 }
                                             }
-                                            resultBots.append(AttachMenuBots.Bot(peerId: PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(botId)), name: name, icons: icons, peerTypes: peerTypes, hasSettings: (flags & (1 << 1)) != 0))
+                                            var flags: AttachMenuBots.Bot.Flags = []
+                                            if (apiFlags & (1 << 1)) != 0 {
+                                                flags.insert(.hasSettings)
+                                            }
+                                            if (apiFlags & (1 << 2)) != 0 {
+                                                flags.insert(.requiresWriteAccess)
+                                            }
+                                            resultBots.append(AttachMenuBots.Bot(peerId: PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(botId)), name: name, icons: icons, peerTypes: peerTypes, flags: flags))
                                         }
                                 }
                             }
@@ -340,12 +368,16 @@ public enum AddBotToAttachMenuError {
 }
 
 
-func _internal_addBotToAttachMenu(postbox: Postbox, network: Network, botId: PeerId) -> Signal<Bool, AddBotToAttachMenuError> {
+func _internal_addBotToAttachMenu(postbox: Postbox, network: Network, botId: PeerId, allowWrite: Bool) -> Signal<Bool, AddBotToAttachMenuError> {
     return postbox.transaction { transaction -> Signal<Bool, AddBotToAttachMenuError> in
         guard let peer = transaction.getPeer(botId), let inputUser = apiInputUser(peer) else {
             return .complete()
         }
-        return network.request(Api.functions.messages.toggleBotInAttachMenu(bot: inputUser, enabled: .boolTrue))
+        var flags: Int32 = 0
+        if allowWrite {
+            flags |= (1 << 0)
+        }
+        return network.request(Api.functions.messages.toggleBotInAttachMenu(flags: flags, bot: inputUser, enabled: .boolTrue))
         |> map { value -> Bool in
             switch value {
                 case .boolTrue:
@@ -379,7 +411,7 @@ func _internal_removeBotFromAttachMenu(postbox: Postbox, network: Network, botId
         guard let peer = transaction.getPeer(botId), let inputUser = apiInputUser(peer) else {
             return .complete()
         }
-        return network.request(Api.functions.messages.toggleBotInAttachMenu(bot: inputUser, enabled: .boolFalse))
+        return network.request(Api.functions.messages.toggleBotInAttachMenu(flags: 0, bot: inputUser, enabled: .boolFalse))
         |> map { value -> Bool in
             switch value {
                 case .boolTrue:
@@ -406,14 +438,14 @@ public struct AttachMenuBot {
     public let shortName: String
     public let icons: [AttachMenuBots.Bot.IconName: TelegramMediaFile]
     public let peerTypes: AttachMenuBots.Bot.PeerFlags
-    public let hasSettings: Bool
+    public let flags: AttachMenuBots.Bot.Flags
     
-    init(peer: Peer, shortName: String, icons: [AttachMenuBots.Bot.IconName: TelegramMediaFile], peerTypes: AttachMenuBots.Bot.PeerFlags, hasSettings: Bool) {
+    init(peer: Peer, shortName: String, icons: [AttachMenuBots.Bot.IconName: TelegramMediaFile], peerTypes: AttachMenuBots.Bot.PeerFlags, flags: AttachMenuBots.Bot.Flags) {
         self.peer = peer
         self.shortName = shortName
         self.icons = icons
         self.peerTypes = peerTypes
-        self.hasSettings = hasSettings
+        self.flags = flags
     }
 }
 
@@ -425,7 +457,7 @@ func _internal_attachMenuBots(postbox: Postbox) -> Signal<[AttachMenuBot], NoErr
         var resultBots: [AttachMenuBot] = []
         for bot in cachedBots {
             if let peer = transaction.getPeer(bot.peerId) {
-                resultBots.append(AttachMenuBot(peer: peer, shortName: bot.name, icons: bot.icons, peerTypes: bot.peerTypes, hasSettings: bot.hasSettings))
+                resultBots.append(AttachMenuBot(peer: peer, shortName: bot.name, icons: bot.icons, peerTypes: bot.peerTypes, flags: bot.flags))
             }
         }
         return resultBots
@@ -435,12 +467,12 @@ func _internal_attachMenuBots(postbox: Postbox) -> Signal<[AttachMenuBot], NoErr
 public enum GetAttachMenuBotError {
     case generic
 }
-
-public func _internal_getAttachMenuBot(postbox: Postbox, network: Network, botId: PeerId, cached: Bool) -> Signal<AttachMenuBot, GetAttachMenuBotError> {
+ 
+func _internal_getAttachMenuBot(postbox: Postbox, network: Network, botId: PeerId, cached: Bool) -> Signal<AttachMenuBot, GetAttachMenuBotError> {
     return postbox.transaction { transaction -> Signal<AttachMenuBot, GetAttachMenuBotError> in
         if cached, let cachedBots = cachedAttachMenuBots(transaction: transaction)?.bots {
             if let bot = cachedBots.first(where: { $0.peerId == botId }), let peer = transaction.getPeer(bot.peerId) {
-                return .single(AttachMenuBot(peer: peer, shortName: bot.name, icons: bot.icons, peerTypes: bot.peerTypes, hasSettings: bot.hasSettings))
+                return .single(AttachMenuBot(peer: peer, shortName: bot.name, icons: bot.icons, peerTypes: bot.peerTypes, flags: bot.flags))
             }
         }
         
@@ -474,7 +506,7 @@ public func _internal_getAttachMenuBot(postbox: Postbox, network: Network, botId
                         }
                     
                         switch bot {
-                            case let .attachMenuBot(flags, _, name, apiPeerTypes, botIcons):
+                            case let .attachMenuBot(apiFlags, _, name, apiPeerTypes, botIcons):
                                 var icons: [AttachMenuBots.Bot.IconName: TelegramMediaFile] = [:]
                                 for icon in botIcons {
                                     switch icon {
@@ -499,7 +531,14 @@ public func _internal_getAttachMenuBot(postbox: Postbox, network: Network, botId
                                             peerTypes.insert(.channel)
                                     }
                                 }
-                                return .single(AttachMenuBot(peer: peer, shortName: name, icons: icons, peerTypes: peerTypes, hasSettings: (flags & (1 << 1)) != 0))
+                                var flags: AttachMenuBots.Bot.Flags = []
+                                if (apiFlags & (1 << 1)) != 0 {
+                                    flags.insert(.hasSettings)
+                                }
+                                if (apiFlags & (1 << 2)) != 0 {
+                                    flags.insert(.requiresWriteAccess)
+                                }
+                                return .single(AttachMenuBot(peer: peer, shortName: name, icons: icons, peerTypes: peerTypes, flags: flags))
                         }
                 }
             }
@@ -508,5 +547,185 @@ public func _internal_getAttachMenuBot(postbox: Postbox, network: Network, botId
         }
     }
     |> castError(GetAttachMenuBotError.self)
+    |> switchToLatest
+}
+
+public enum BotAppReference {
+    case id(id: Int64, accessHash: Int64)
+    case shortName(peerId: PeerId, shortName: String)
+}
+
+public final class BotApp: Equatable, Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case accessHash
+        case shortName
+        case title
+        case description
+        case photo
+        case document
+        case hash
+        case flags
+    }
+    
+    public struct Flags: OptionSet {
+        public var rawValue: Int32
+        
+        public init(rawValue: Int32) {
+            self.rawValue = rawValue
+        }
+        
+        public init() {
+            self.rawValue = 0
+        }
+        
+        public static let notActivated = Flags(rawValue: 1 << 0)
+        public static let requiresWriteAccess = Flags(rawValue: 1 << 1)
+    }
+    
+    public let id: Int64
+    public let accessHash: Int64
+    public let shortName: String
+    public let title: String
+    public let description: String
+    public let photo: TelegramMediaImage?
+    public let document: TelegramMediaFile?
+    public let hash: Int64
+    public let flags: Flags
+    
+    public init(
+        id: Int64,
+        accessHash: Int64,
+        shortName: String,
+        title: String,
+        description: String,
+        photo: TelegramMediaImage?,
+        document: TelegramMediaFile?,
+        hash: Int64,
+        flags: Flags
+    ) {
+        self.id = id
+        self.accessHash = accessHash
+        self.shortName = shortName
+        self.title = title
+        self.description = description
+        self.photo = photo
+        self.document = document
+        self.hash = hash
+        self.flags = flags
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        self.id = try container.decode(Int64.self, forKey: .id)
+        self.accessHash = try container.decode(Int64.self, forKey: .accessHash)
+        self.shortName = try container.decode(String.self, forKey: .shortName)
+        self.title = try container.decode(String.self, forKey: .title)
+        self.description = try container.decode(String.self, forKey: .description)
+        
+        if let data = try container.decodeIfPresent(AdaptedPostboxDecoder.RawObjectData.self, forKey: .photo) {
+            self.photo = TelegramMediaImage(decoder: PostboxDecoder(buffer: MemoryBuffer(data: data.data)))
+        } else {
+            self.photo = nil
+        }
+        
+        if let data = try container.decodeIfPresent(AdaptedPostboxDecoder.RawObjectData.self, forKey: .document) {
+            self.document = TelegramMediaFile(decoder: PostboxDecoder(buffer: MemoryBuffer(data: data.data)))
+        } else {
+            self.document = nil
+        }
+        
+        self.hash = try container.decode(Int64.self, forKey: .hash)
+        self.flags = Flags(rawValue: try container.decode(Int32.self, forKey: .flags))
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        try container.encode(self.id, forKey: .id)
+        try container.encode(self.accessHash, forKey: .accessHash)
+        try container.encode(self.shortName, forKey: .shortName)
+        try container.encode(self.title, forKey: .title)
+        try container.encode(self.description, forKey: .description)
+        try container.encodeIfPresent(self.photo, forKey: .photo)
+        try container.encodeIfPresent(self.document, forKey: .document)
+        try container.encode(self.hash, forKey: .hash)
+        try container.encode(self.flags.rawValue, forKey: .flags)
+    }
+    
+    public static func ==(lhs: BotApp, rhs: BotApp) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.accessHash != rhs.accessHash {
+            return false
+        }
+        if lhs.shortName != rhs.shortName {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.description != rhs.description {
+            return false
+        }
+        if lhs.photo != rhs.photo {
+            return false
+        }
+        if lhs.document != rhs.document {
+            return false
+        }
+        if lhs.hash != rhs.hash {
+            return false
+        }
+        if lhs.flags != rhs.flags {
+            return false
+        }
+        return true
+    }
+}
+
+public enum GetBotAppError {
+    case generic
+}
+
+func _internal_getBotApp(account: Account, reference: BotAppReference) -> Signal<BotApp, GetBotAppError> {
+    return account.postbox.transaction { transaction -> Signal<BotApp, GetBotAppError> in
+        let app: Api.InputBotApp
+        switch reference {
+        case let .id(id, accessHash):
+            app = .inputBotAppID(id: id, accessHash: accessHash)
+        case let .shortName(peerId, shortName):
+            guard let bot = transaction.getPeer(peerId), let inputBot = apiInputUser(bot) else {
+                return .fail(.generic)
+            }
+            app = .inputBotAppShortName(botId: inputBot, shortName: shortName)
+        }
+        
+        return account.network.request(Api.functions.messages.getBotApp(app: app, hash: 0))
+        |> mapError { _ -> GetBotAppError in
+            return .generic
+        }
+        |> mapToSignal { result -> Signal<BotApp, GetBotAppError> in
+            switch result {
+                case let .botApp(_, app):
+                switch app {
+                case let .botApp(flags, id, accessHash, shortName, title, description, photo, document, hash):
+                    var appFlags = BotApp.Flags()
+                    if (flags & (1 << 0)) != 0 {
+                        appFlags.insert(.notActivated)
+                    }
+                    if (flags & (1 << 1)) != 0 {
+                        appFlags.insert(.requiresWriteAccess)
+                    }
+                    return .single(BotApp(id: id, accessHash: accessHash, shortName: shortName, title: title, description: description, photo: telegramMediaImageFromApiPhoto(photo), document: document.flatMap(telegramMediaFileFromApiDocument), hash: hash, flags: appFlags))
+                case .botAppNotModified:
+                    return .complete()
+                }
+            }
+        }
+    }
+    |> castError(GetBotAppError.self)
     |> switchToLatest
 }

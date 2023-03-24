@@ -155,6 +155,13 @@ final class ChatRecentActionsController: TelegramBaseController {
         }, updateShowWebView: { _ in
         }, insertText: { _ in
         }, backwardsDeleteText: {
+        }, restartTopic: {
+        }, toggleTranslation: { _ in
+        }, changeTranslationLanguage: { _ in
+        }, addDoNotTranslateLanguage: { _ in
+        }, hideTranslationPanel: {
+        }, openPremiumGift: {
+        }, requestLayout: { _ in
         }, chatController: {
             return nil
         }, statuses: nil)

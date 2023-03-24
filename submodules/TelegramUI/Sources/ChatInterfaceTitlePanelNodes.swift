@@ -3,6 +3,7 @@ import UIKit
 import TelegramCore
 import AccountContext
 import ChatPresentationInterfaceState
+import ChatControllerInteraction
 
 func titlePanelForChatPresentationInterfaceState(_ chatPresentationInterfaceState: ChatPresentationInterfaceState, context: AccountContext, currentPanel: ChatTitleAccessoryPanelNode?, controllerInteraction: ChatControllerInteraction?, interfaceInteraction: ChatPanelInterfaceInteraction?) -> ChatTitleAccessoryPanelNode? {
     if case .overlay = chatPresentationInterfaceState.mode {
@@ -41,7 +42,7 @@ func titlePanelForChatPresentationInterfaceState(_ chatPresentationInterfaceStat
                             break loop
                         }
                     }
-                case .chatInfo, .requestInProgress, .toastAlert, .inviteRequests:
+                case .requestInProgress, .toastAlert, .inviteRequests:
                     selectedContext = context
                     break loop
             }
@@ -51,9 +52,37 @@ func titlePanelForChatPresentationInterfaceState(_ chatPresentationInterfaceStat
     if inhibitTitlePanelDisplay, let selectedContextValue = selectedContext {
         switch selectedContextValue {
         case .pinnedMessage:
+            if case .peer = chatPresentationInterfaceState.chatLocation {
+                selectedContext = nil
+            }
             break
         default:
             selectedContext = nil
+        }
+    }
+    
+    if let channel = chatPresentationInterfaceState.renderedPeer?.peer as? TelegramChannel, channel.flags.contains(.isForum) {
+        if let threadData = chatPresentationInterfaceState.threadData {
+            if threadData.isClosed {
+                var canManage = false
+                if channel.flags.contains(.isCreator) {
+                    canManage = true
+                } else if channel.hasPermission(.manageTopics) {
+                    canManage = true
+                } else if threadData.isOwnedByMe {
+                    canManage = true
+                }
+                
+                if canManage {
+                    if let currentPanel = currentPanel as? ChatReportPeerTitlePanelNode {
+                        return currentPanel
+                    } else if let controllerInteraction = controllerInteraction {
+                        let panel = ChatReportPeerTitlePanelNode(context: context, animationCache: controllerInteraction.presentationContext.animationCache, animationRenderer: controllerInteraction.presentationContext.animationRenderer)
+                        panel.interfaceInteraction = interfaceInteraction
+                        return panel
+                    }
+                }
+            }
         }
     }
     
@@ -91,14 +120,6 @@ func titlePanelForChatPresentationInterfaceState(_ chatPresentationInterfaceStat
                     return currentPanel
                 } else {
                     let panel = ChatPinnedMessageTitlePanelNode(context: context, animationCache: controllerInteraction?.presentationContext.animationCache, animationRenderer: controllerInteraction?.presentationContext.animationRenderer)
-                    panel.interfaceInteraction = interfaceInteraction
-                    return panel
-                }
-            case .chatInfo:
-                if let currentPanel = currentPanel as? ChatInfoTitlePanelNode {
-                    return currentPanel
-                } else {
-                    let panel = ChatInfoTitlePanelNode()
                     panel.interfaceInteraction = interfaceInteraction
                     return panel
                 }
