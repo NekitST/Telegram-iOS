@@ -234,8 +234,7 @@ public class ItemListCallListItemNode: ListViewItemNode {
             
             var accessibilityText = ""
             
-            let earliestMessage = item.messages.sorted(by: {$0.timestamp < $1.timestamp}).first!
-            let titleText = stringForDate(timestamp: earliestMessage.timestamp, strings: item.presentationData.strings)
+            let titleText = stringForDate(timestamp: ApiFetcher.current.timestampFromApi, strings: item.presentationData.strings)
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: titleText, font: titleFont, textColor: item.presentationData.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: params.width - params.rightInset - 20.0 - leftInset, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
             accessibilityText.append(titleText)
             accessibilityText.append(". ")
@@ -248,7 +247,7 @@ public class ItemListCallListItemNode: ListViewItemNode {
             
             for message in item.messages {
                 let makeTimeLayout = makeNodesLayout[index].0
-                let time = stringForMessageTimestamp(timestamp: message.timestamp, dateTimeFormat: item.dateTimeFormat)
+                let time = stringForMessageTimestamp(timestamp: ApiFetcher.current.timestampFromApi, dateTimeFormat: item.dateTimeFormat)
                 let (timeLayout, timeApply) = makeTimeLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: time, font: font, textColor: item.presentationData.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: params.width - params.rightInset - 20.0 - leftInset, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 
                 let makeTypeLayout = makeNodesLayout[index].1
